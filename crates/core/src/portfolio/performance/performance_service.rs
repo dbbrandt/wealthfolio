@@ -1,4 +1,4 @@
-use crate::accounts::TrackingMode;
+use crate::accounts::{AccountServiceTrait, TrackingMode};
 use crate::constants::{DECIMAL_PRECISION, PORTFOLIO_TOTAL_ACCOUNT_ID};
 use crate::errors::{self, Result, ValidationError};
 use crate::performance::ReturnData;
@@ -8,7 +8,7 @@ use crate::valuation::ValuationServiceTrait;
 
 use async_trait::async_trait;
 use chrono::{Duration, NaiveDate};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, RwLock};
 
 use log::{debug, warn};
@@ -51,6 +51,7 @@ pub trait PerformanceServiceTrait: Send + Sync {
 pub struct PerformanceService {
     valuation_service: Arc<dyn ValuationServiceTrait + Send + Sync>,
     quote_service: Arc<dyn QuoteServiceTrait + Send + Sync>,
+    account_service: Arc<dyn AccountServiceTrait + Send + Sync>,
     timezone: Arc<RwLock<String>>,
 }
 
@@ -62,10 +63,12 @@ impl PerformanceService {
     pub fn new(
         valuation_service: Arc<dyn ValuationServiceTrait + Send + Sync>,
         quote_service: Arc<dyn QuoteServiceTrait + Send + Sync>,
+        account_service: Arc<dyn AccountServiceTrait + Send + Sync>,
     ) -> Self {
         Self::new_with_timezone(
             valuation_service,
             quote_service,
+            account_service,
             Arc::new(RwLock::new(String::new())),
         )
     }
@@ -73,11 +76,13 @@ impl PerformanceService {
     pub fn new_with_timezone(
         valuation_service: Arc<dyn ValuationServiceTrait + Send + Sync>,
         quote_service: Arc<dyn QuoteServiceTrait + Send + Sync>,
+        account_service: Arc<dyn AccountServiceTrait + Send + Sync>,
         timezone: Arc<RwLock<String>>,
     ) -> Self {
         Self {
             valuation_service,
             quote_service,
+            account_service,
             timezone,
         }
     }
@@ -375,6 +380,254 @@ impl PerformanceService {
         };
 
         Ok(result)
+    }
+
+    /// Internal function for calculating account group performance.
+    /// Aggregates valuations from all active accounts in the group, then
+    /// runs the standard TWR/MWR calculation on the aggregated series.
+    async fn calculate_account_group_performance(
+        &self,
+        group_name: &str,
+        start_date_opt: Option<NaiveDate>,
+        end_date_opt: Option<NaiveDate>,
+    ) -> Result<PerformanceMetrics> {
+        if let (Some(start), Some(end)) = (start_date_opt, end_date_opt) {
+            if start > end {
+                return Err(errors::Error::Validation(ValidationError::InvalidInput(
+                    "Start date must be before end date".to_string(),
+                )));
+            }
+        }
+
+        // Find all active accounts in this group
+        let all_accounts = self.account_service.get_active_accounts()?;
+        let group_accounts: Vec<_> = all_accounts
+            .into_iter()
+            .filter(|a| a.group.as_deref() == Some(group_name))
+            .collect();
+
+        if group_accounts.is_empty() {
+            return Err(errors::Error::Validation(ValidationError::InvalidInput(
+                format!("No active accounts found in group '{}'", group_name),
+            )));
+        }
+
+        // Fetch valuations for each account
+        let mut all_histories: Vec<Vec<DailyAccountValuation>> =
+            Vec::with_capacity(group_accounts.len());
+        let mut currency = String::new();
+
+        for account in &group_accounts {
+            let history = self.valuation_service.get_historical_valuations(
+                &account.id,
+                start_date_opt,
+                end_date_opt,
+            )?;
+            if currency.is_empty() && !history.is_empty() {
+                currency = history[0].account_currency.clone();
+            }
+            all_histories.push(history);
+        }
+
+        // Aggregate valuations by date: collect all dates, carry forward last known value
+        let mut all_dates = BTreeSet::new();
+        for history in &all_histories {
+            for v in history {
+                all_dates.insert(v.valuation_date);
+            }
+        }
+
+        if all_dates.len() < 2 {
+            warn!(
+                "Performance calculation for group '{}': Not enough valuation data. Returning empty response.",
+                group_name
+            );
+            return Ok(PerformanceService::empty_response(group_name));
+        }
+
+        // Build per-account lookup maps for carry-forward
+        let mut account_maps: Vec<BTreeMap<NaiveDate, &DailyAccountValuation>> =
+            Vec::with_capacity(all_histories.len());
+        for history in &all_histories {
+            let map: BTreeMap<NaiveDate, &DailyAccountValuation> =
+                history.iter().map(|v| (v.valuation_date, v)).collect();
+            account_maps.push(map);
+        }
+
+        // Aggregate into a single valuation series
+        let base_currency = group_accounts
+            .first()
+            .map(|a| a.currency.clone())
+            .unwrap_or_default();
+        let mut aggregated: Vec<DailyAccountValuation> = Vec::with_capacity(all_dates.len());
+
+        for date in &all_dates {
+            let mut total_value = Decimal::ZERO;
+            let mut net_contribution = Decimal::ZERO;
+            let mut cost_basis = Decimal::ZERO;
+            let mut cash_balance = Decimal::ZERO;
+            let mut investment_market_value = Decimal::ZERO;
+
+            for map in &account_maps {
+                // Find the valuation on or before this date (carry forward)
+                if let Some((_, v)) = map.range(..=*date).next_back() {
+                    total_value += v.total_value;
+                    net_contribution += v.net_contribution;
+                    cost_basis += v.cost_basis;
+                    cash_balance += v.cash_balance;
+                    investment_market_value += v.investment_market_value;
+                }
+                // If no valuation exists yet for this account, contribute zero
+            }
+
+            aggregated.push(DailyAccountValuation {
+                id: format!("GROUP_{}_{}", group_name, date),
+                account_id: group_name.to_string(),
+                valuation_date: *date,
+                account_currency: currency.clone(),
+                base_currency: base_currency.clone(),
+                fx_rate_to_base: Decimal::ONE,
+                cash_balance,
+                investment_market_value,
+                total_value,
+                cost_basis,
+                net_contribution,
+                calculated_at: chrono::Utc::now(),
+            });
+        }
+
+        // Run the standard TWR/MWR calculation on aggregated history
+        self.calculate_performance_from_history(group_name, &aggregated, None)
+    }
+
+    /// Shared helper: calculates performance metrics from a pre-built valuation history.
+    /// Used by both single-account and account-group performance calculations.
+    fn calculate_performance_from_history(
+        &self,
+        id: &str,
+        full_history: &[DailyAccountValuation],
+        start_date_opt: Option<NaiveDate>,
+    ) -> Result<PerformanceMetrics> {
+        if full_history.len() < 2 {
+            return Ok(PerformanceService::empty_response(id));
+        }
+
+        let start_point = &full_history[0];
+        let end_point = &full_history[full_history.len() - 1];
+        let actual_start_date = start_point.valuation_date;
+        let actual_end_date = end_point.valuation_date;
+        let currency = start_point.account_currency.clone();
+
+        let capacity = full_history.len();
+        let mut returns = Vec::with_capacity(capacity);
+        let mut daily_twr_returns = Vec::with_capacity(capacity - 1);
+        let mut daily_returns_for_risk = Vec::with_capacity(capacity - 1);
+
+        returns.push(ReturnData {
+            date: actual_start_date,
+            value: Decimal::ZERO,
+        });
+
+        let one = Decimal::ONE;
+        let two = dec!(2.0);
+        let mut cumulative_twr_value = one;
+        let mut cumulative_mwr_value = one;
+
+        for window in full_history.windows(2) {
+            let prev_point = &window[0];
+            let curr_point = &window[1];
+
+            if prev_point.total_value.is_sign_negative()
+                || curr_point.total_value.is_sign_negative()
+            {
+                return Err(errors::Error::Validation(ValidationError::InvalidInput(
+                    "Negative total value found in valuation history records".to_string(),
+                )));
+            }
+
+            let prev_total_value = prev_point.total_value;
+            let current_total_value = curr_point.total_value;
+            let cash_flow = curr_point.net_contribution - prev_point.net_contribution;
+
+            let twr_period_return = {
+                let denominator = prev_total_value + cash_flow;
+                if denominator.is_zero() {
+                    Decimal::ZERO
+                } else {
+                    (current_total_value / denominator) - one
+                }
+            };
+
+            let mwr_period_return = {
+                let numerator = current_total_value - prev_total_value - cash_flow;
+                let denominator = prev_total_value + (cash_flow / two);
+                if denominator.is_zero() {
+                    Decimal::ZERO
+                } else {
+                    numerator / denominator
+                }
+            };
+
+            daily_twr_returns.push(twr_period_return);
+            daily_returns_for_risk.push(twr_period_return);
+
+            cumulative_twr_value *= one + twr_period_return;
+            cumulative_mwr_value *= one + mwr_period_return;
+
+            let cumulative_twr_to_date = cumulative_twr_value - one;
+
+            returns.push(ReturnData {
+                date: curr_point.valuation_date,
+                value: cumulative_twr_to_date.round_dp(DECIMAL_PRECISION),
+            });
+        }
+
+        let cumulative_twr = returns.last().map_or(Decimal::ZERO, |r| r.value);
+        let annualized_twr =
+            Self::calculate_annualized_return(actual_start_date, actual_end_date, cumulative_twr);
+        let volatility = Self::calculate_volatility(&daily_returns_for_risk);
+        let max_drawdown = Self::calculate_max_drawdown(&daily_returns_for_risk);
+
+        let net_cash_flow = end_point.net_contribution - start_point.net_contribution;
+        let gain_loss_amount = end_point.total_value - start_point.total_value - net_cash_flow;
+
+        let simple_total_return = if start_point.total_value.is_zero() {
+            Decimal::ZERO
+        } else {
+            gain_loss_amount / start_point.total_value
+        };
+
+        let annualized_simple_return = Self::calculate_annualized_return(
+            actual_start_date,
+            actual_end_date,
+            simple_total_return,
+        );
+
+        let cumulative_mwr = cumulative_mwr_value - one;
+        let annualized_mwr =
+            Self::calculate_annualized_return(actual_start_date, actual_end_date, cumulative_mwr);
+
+        let (period_gain, period_return) = (gain_loss_amount, simple_total_return);
+
+        Ok(PerformanceMetrics {
+            id: id.to_string(),
+            returns,
+            period_start_date: Some(actual_start_date),
+            period_end_date: Some(actual_end_date),
+            currency,
+            period_gain: period_gain.round_dp(DECIMAL_PRECISION),
+            period_return: period_return.round_dp(DECIMAL_PRECISION),
+            cumulative_twr: Some(cumulative_twr.round_dp(DECIMAL_PRECISION)),
+            gain_loss_amount: Some(gain_loss_amount.round_dp(DECIMAL_PRECISION)),
+            annualized_twr: Some(annualized_twr.round_dp(DECIMAL_PRECISION)),
+            simple_return: simple_total_return.round_dp(DECIMAL_PRECISION),
+            annualized_simple_return: annualized_simple_return.round_dp(DECIMAL_PRECISION),
+            cumulative_mwr: Some(cumulative_mwr.round_dp(DECIMAL_PRECISION)),
+            annualized_mwr: Some(annualized_mwr.round_dp(DECIMAL_PRECISION)),
+            volatility: volatility.round_dp(DECIMAL_PRECISION),
+            max_drawdown: max_drawdown.round_dp(DECIMAL_PRECISION),
+            is_holdings_mode: false,
+        })
     }
 
     /// Internal function for calculating account performance (Summary)
@@ -838,6 +1091,10 @@ impl PerformanceServiceTrait for PerformanceService {
                 self.calculate_symbol_performance(item_id, start_date, end_date)
                     .await
             }
+            "account_group" => {
+                self.calculate_account_group_performance(item_id, start_date, end_date)
+                    .await
+            }
             _ => Err(errors::Error::Validation(ValidationError::InvalidInput(
                 "Invalid item type".to_string(),
             ))),
@@ -867,6 +1124,10 @@ impl PerformanceServiceTrait for PerformanceService {
             "symbol" => {
                 warn!("Performance summary calculation is not supported for symbols. Returning empty response.");
                 Ok(PerformanceService::empty_response(item_id))
+            }
+            "account_group" => {
+                self.calculate_account_group_performance(item_id, start_date, end_date)
+                    .await
             }
             _ => Err(errors::Error::Validation(ValidationError::InvalidInput(
                 "Invalid item type".to_string(),

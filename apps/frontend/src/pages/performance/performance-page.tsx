@@ -61,7 +61,7 @@ interface ChartDataItem {
 // Define the actual structure returned by the hook
 interface PerformanceDataFromHook extends PerformanceMetrics {
   name: string;
-  type: "account" | "symbol";
+  type: "account" | "symbol" | "account_group";
 }
 
 function PerformanceContent({
@@ -226,15 +226,13 @@ export default function PerformancePage() {
   const [accountSheetOpen, setAccountSheetOpen] = useState(false);
   const [benchmarkSheetOpen, setBenchmarkSheetOpen] = useState(false);
 
-  // Helper function to sort comparison items (accounts first, then symbols)
+  // Helper function to sort comparison items (accounts first, then groups, then symbols)
   const sortComparisonItems = (items: TrackedItem[]): TrackedItem[] => {
+    const typeOrder: Record<string, number> = { account: 0, account_group: 1, symbol: 2 };
     return [...items].sort((a, b) => {
-      // Sort by type first (accounts before symbols)
-      if (a.type !== b.type) {
-        return a.type === "account" ? -1 : 1;
-      }
-      // If same type, maintain original order
-      return 0;
+      const orderA = typeOrder[a.type] ?? 9;
+      const orderB = typeOrder[b.type] ?? 9;
+      return orderA - orderB;
     });
   };
 
@@ -320,6 +318,31 @@ export default function PerformancePage() {
     setSelectedItemId(accountId);
   };
 
+  const handleGroupSelect = (group: { id: string; name: string }) => {
+    const groupId = group.id;
+    const exists = selectedItems.some((item) => item.id === groupId && item.type === "account_group");
+
+    if (exists) {
+      const nextItems = sortComparisonItems(
+        selectedItems.filter((item) => !(item.id === groupId && item.type === "account_group")),
+      );
+      setSelectedItems(nextItems);
+      if (selectedItemId === groupId) {
+        setSelectedItemId(null);
+      }
+      return;
+    }
+
+    const newItem: TrackedItem = {
+      id: groupId,
+      type: "account_group",
+      name: group.name,
+    };
+
+    setSelectedItems(sortComparisonItems([...selectedItems, newItem]));
+    setSelectedItemId(groupId);
+  };
+
   const handleSymbolSelect = (symbol: { id: string; name: string }) => {
     const symbolId = String(symbol.id);
     const exists = selectedItems.some((item) => item.id === symbolId);
@@ -343,6 +366,8 @@ export default function PerformancePage() {
     e.stopPropagation();
     if (item.type === "account") {
       handleAccountSelect({ id: item.id, name: item.name });
+    } else if (item.type === "account_group") {
+      handleGroupSelect({ id: item.id, name: item.name });
     } else {
       setSelectedItems((prev) => sortComparisonItems(prev.filter((i) => i.id !== item.id)));
     }
@@ -457,6 +482,7 @@ export default function PerformancePage() {
               variant="button"
               buttonText="Add account"
               includePortfolio={true}
+              onGroupSelect={handleGroupSelect}
             />
             <BenchmarkSymbolSelector onSelect={handleSymbolSelect} />
           </div>
@@ -471,6 +497,10 @@ export default function PerformancePage() {
           includePortfolio={true}
           open={accountSheetOpen}
           onOpenChange={setAccountSheetOpen}
+          onGroupSelect={(group) => {
+            handleGroupSelect(group);
+            setAccountSheetOpen(false);
+          }}
           className="hidden"
         />
         <BenchmarkSymbolSelectorMobile

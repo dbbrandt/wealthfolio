@@ -270,6 +270,7 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
         wealthfolio_core::portfolio::performance::PerformanceService::new_with_timezone(
             valuation_service.clone(),
             quote_service.clone(),
+            account_service.clone(),
             timezone.clone(),
         ),
     );

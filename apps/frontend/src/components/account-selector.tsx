@@ -43,6 +43,8 @@ interface AccountSelectorProps {
   icon?: Icon;
   /** Filter accounts by tracking mode(s). If provided, only accounts with matching tracking mode are shown. */
   trackingModes?: TrackingMode[];
+  /** Callback when an account group is selected. When provided, a GROUPS section is shown. */
+  onGroupSelect?: (group: { id: string; name: string }) => void;
 }
 
 // Extended Account type for UI that can have the PORTFOLIO type
@@ -120,6 +122,7 @@ export const AccountSelector = forwardRef<HTMLButtonElement, AccountSelectorProp
       iconOnly = false,
       icon: CustomIcon,
       trackingModes,
+      onGroupSelect,
     },
     ref,
   ) => {
@@ -164,6 +167,11 @@ export const AccountSelector = forwardRef<HTMLButtonElement, AccountSelectorProp
       if (typeB === PORTFOLIO_ACCOUNT_ID) return 1;
       return 0;
     });
+
+    // Extract unique account groups for the GROUPS section
+    const uniqueAccountGroups = onGroupSelect
+      ? [...new Set(filteredAccounts.filter((a) => a.group).map((a) => a.group!))].sort()
+      : [];
 
     // Render skeleton for loading state
     const renderSkeleton = () => {
@@ -423,39 +431,74 @@ export const AccountSelector = forwardRef<HTMLButtonElement, AccountSelectorProp
               ) : (
                 <>
                   <CommandEmpty>No accounts found.</CommandEmpty>
-                  {sortedGroups.map(([type, typeAccounts]) => (
-                    <CommandGroup key={type} heading={type}>
-                      {typeAccounts.map((account) => {
-                        const IconComponent =
-                          accountTypeIcons[account.accountType] ?? Icons.CreditCard;
-                        return (
-                          <CommandItem
-                            key={account.id}
-                            value={account.id}
-                            keywords={[account.name, account.currency, account.accountType]}
-                            onSelect={() => {
-                              setSelectedAccount(account);
-                              setOpen(false);
-                            }}
-                            className="flex items-center py-1.5"
-                          >
-                            <div className="flex flex-1 items-center">
-                              <IconComponent className="mr-2 h-4 w-4" />
-                              <span>
-                                {account.name} ({account.currency})
-                              </span>
-                            </div>
-                            <Icons.Check
-                              className={cn(
-                                "ml-auto h-4 w-4",
-                                selectedAccount?.id === account.id ? "opacity-100" : "opacity-0",
-                              )}
-                            />
-                          </CommandItem>
-                        );
-                      })}
-                    </CommandGroup>
-                  ))}
+                  {sortedGroups.flatMap(([type, typeAccounts]) => {
+                    const groupSection = (
+                      <CommandGroup key={type} heading={type}>
+                        {typeAccounts.map((account) => {
+                          const IconComponent =
+                            accountTypeIcons[account.accountType] ?? Icons.CreditCard;
+                          return (
+                            <CommandItem
+                              key={account.id}
+                              value={account.id}
+                              keywords={[account.name, account.currency, account.accountType]}
+                              onSelect={() => {
+                                setSelectedAccount(account);
+                                setOpen(false);
+                              }}
+                              className="flex items-center py-1.5"
+                            >
+                              <div className="flex flex-1 items-center">
+                                <IconComponent className="mr-2 h-4 w-4" />
+                                <span>
+                                  {account.name} ({account.currency})
+                                </span>
+                              </div>
+                              <Icons.Check
+                                className={cn(
+                                  "ml-auto h-4 w-4",
+                                  selectedAccount?.id === account.id
+                                    ? "opacity-100"
+                                    : "opacity-0",
+                                )}
+                              />
+                            </CommandItem>
+                          );
+                        })}
+                      </CommandGroup>
+                    );
+
+                    // Insert GROUPS section right after TOTAL
+                    if (
+                      type === PORTFOLIO_ACCOUNT_ID &&
+                      uniqueAccountGroups.length > 0
+                    ) {
+                      return [
+                        groupSection,
+                        <CommandGroup key="GROUPS" heading="GROUPS">
+                          {uniqueAccountGroups.map((groupName) => (
+                            <CommandItem
+                              key={`group:${groupName}`}
+                              value={`group:${groupName}`}
+                              keywords={[groupName]}
+                              onSelect={() => {
+                                onGroupSelect?.({ id: groupName, name: groupName });
+                                setOpen(false);
+                              }}
+                              className="flex items-center py-1.5"
+                            >
+                              <div className="flex flex-1 items-center">
+                                <Icons.FolderOpen className="mr-2 h-4 w-4" />
+                                <span>{groupName}</span>
+                              </div>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>,
+                      ];
+                    }
+
+                    return [groupSection];
+                  })}
                 </>
               )}
             </CommandList>

@@ -52,7 +52,7 @@ export const getLatestValuations = async (accountIds: string[]): Promise<Account
 };
 
 export const calculatePerformanceHistory = async (
-  itemType: "account" | "symbol",
+  itemType: "account" | "symbol" | "account_group",
   itemId: string,
   startDate: string | undefined,
   endDate: string | undefined,
@@ -74,7 +74,7 @@ export const calculatePerformanceHistory = async (
 };
 
 interface CalculatePerformanceSummaryArgs {
-  itemType: "account" | "symbol";
+  itemType: "account" | "symbol" | "account_group";
   itemId: string;
   startDate?: string | null;
   endDate?: string | null;
