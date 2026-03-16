@@ -950,7 +950,7 @@ export interface UpdateAssetProfile {
 // Rename ComparisonItem to TrackedItem
 export interface TrackedItem {
   id: string;
-  type: "account" | "symbol";
+  type: "account" | "symbol" | "account_group";
   name: string;
 }
 

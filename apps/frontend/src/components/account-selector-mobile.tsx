@@ -35,6 +35,8 @@ interface AccountSelectorMobileProps {
   iconOnly?: boolean;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /** Callback when an account group is selected. When provided, a GROUPS section is shown. */
+  onGroupSelect?: (group: { id: string; name: string }) => void;
 }
 
 // Extended Account type for UI that can have the PORTFOLIO type
@@ -69,6 +71,7 @@ export const AccountSelectorMobile = forwardRef<HTMLButtonElement, AccountSelect
       iconOnly = false,
       open: controlledOpen,
       onOpenChange,
+      onGroupSelect,
     },
     ref,
   ) => {
@@ -101,6 +104,11 @@ export const AccountSelectorMobile = forwardRef<HTMLButtonElement, AccountSelect
       },
       {} as Record<string, UIAccount[]>,
     );
+
+    // Extract unique account groups
+    const uniqueAccountGroups = onGroupSelect
+      ? [...new Set((accounts || []).filter((a) => a.group).map((a) => a.group!))].sort()
+      : [];
 
     const handleAccountSelect = (account: UIAccount) => {
       setSelectedAccount(account as Account);
@@ -185,6 +193,31 @@ export const AccountSelectorMobile = forwardRef<HTMLButtonElement, AccountSelect
                   </div>
                 </div>
               ))}
+              {uniqueAccountGroups.length > 0 && (
+                <div>
+                  <h3 className="text-muted-foreground mb-3 text-sm font-medium">Groups</h3>
+                  <div className="space-y-2">
+                    {uniqueAccountGroups.map((groupName) => (
+                      <button
+                        key={`group:${groupName}`}
+                        onClick={() => {
+                          onGroupSelect?.({ id: groupName, name: groupName });
+                          setOpen(false);
+                        }}
+                        className="hover:bg-accent active:bg-accent/80 focus:border-primary flex w-full items-center gap-3 rounded-lg border border-transparent p-3 text-left transition-colors focus:outline-none"
+                      >
+                        <div className="bg-primary/10 flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full">
+                          <Icons.FolderOpen className="text-primary h-5 w-5" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-foreground truncate font-medium">{groupName}</div>
+                        </div>
+                        <Icons.ChevronRight className="text-muted-foreground h-5 w-5 flex-shrink-0" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </ScrollArea>
         </SheetContent>
