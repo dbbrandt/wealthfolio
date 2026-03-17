@@ -28,6 +28,7 @@ coverage
 .env
 .env.*
 !.env.example
+!.env.sample
 !.env.web.example
 
 # Editor directories and files
@@ -85,6 +86,7 @@ Thumbs.db
 /playwright/.auth/
 /AI-POC-COPY
 # AI tools
+.claude/
 .ralph-tui/
 .kiro/
 .conductor/
