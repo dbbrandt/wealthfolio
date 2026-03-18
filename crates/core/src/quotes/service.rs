@@ -9,7 +9,7 @@
 
 use async_trait::async_trait;
 use chrono::{Duration, NaiveDate, TimeZone, Utc};
-use log::{debug, info};
+use log::{debug, info, warn};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -1153,6 +1153,11 @@ where
     // =========================================================================
 
     async fn sync(&self, mode: SyncMode, asset_ids: Option<Vec<String>>) -> Result<SyncResult> {
+        // Refresh client to pick up API keys that may have been inaccessible at
+        // startup (e.g. macOS Keychain prompts not yet approved).
+        if let Err(e) = self.refresh_client().await {
+            warn!("Failed to refresh market data client before sync: {:?}", e);
+        }
         let sync_service = self.get_sync_service().await?;
         sync_service.sync(mode, asset_ids).await
     }

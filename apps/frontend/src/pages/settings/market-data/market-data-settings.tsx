@@ -38,7 +38,7 @@ interface ProviderSettingsProps {
   priorityValue: number;
   onUpdate: (settings: { priority?: number; enabled?: boolean }) => void;
   onPriorityChange: (value: string) => void;
-  onPrioritySave: () => void;
+  onPrioritySave: (newPriority: number) => void;
   isLast?: boolean;
 }
 
@@ -379,10 +379,10 @@ function ProviderSettings({
                         variant="outline"
                         size="icon"
                         className="h-7 w-7 rounded-r-none"
-                        onClick={() => {
+                      onClick={() => {
                           const newVal = Math.max(1, (priorityValue ?? 1) - 1);
                           onPriorityChange(String(newVal));
-                          onPrioritySave();
+                          onPrioritySave(newVal);
                         }}
                       >
                         <Icons.MinusCircle className="h-3 w-3" />
@@ -394,10 +394,10 @@ function ProviderSettings({
                         variant="outline"
                         size="icon"
                         className="h-7 w-7 rounded-l-none"
-                        onClick={() => {
+                      onClick={() => {
                           const newVal = (priorityValue ?? 1) + 1;
                           onPriorityChange(String(newVal));
-                          onPrioritySave();
+                          onPrioritySave(newVal);
                         }}
                       >
                         <Icons.PlusCircle className="h-3 w-3" />
@@ -497,8 +497,7 @@ export default function MarketDataSettingsPage() {
     setPriorityInputs((prev) => ({ ...prev, [providerId]: isNaN(numValue) ? 0 : numValue }));
   };
 
-  const handlePrioritySave = (providerId: string) => {
-    const newPriority = priorityInputs[providerId];
+  const handlePrioritySave = (providerId: string, newPriority: number) => {
     const provider = providers?.find((p) => p.id === providerId);
     if (provider && newPriority !== provider.priority) {
       handleUpdateSetting(providerId, { priority: newPriority });
@@ -694,7 +693,7 @@ export default function MarketDataSettingsPage() {
                   priorityValue={priorityInputs[provider.id]}
                   onUpdate={(settings) => handleUpdateSetting(provider.id, settings)}
                   onPriorityChange={(value) => handlePriorityInputChange(provider.id, value)}
-                  onPrioritySave={() => handlePrioritySave(provider.id)}
+                  onPrioritySave={(newPriority) => handlePrioritySave(provider.id, newPriority)}
                   isLast={index === arr.length - 1}
                 />
               ))}

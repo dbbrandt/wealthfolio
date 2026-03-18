@@ -183,40 +183,24 @@ impl MarketDataClient {
                 Ok(Some(Arc::new(provider)))
             }
             DATA_SOURCE_MARKET_DATA_APP => {
-                if let Ok(Some(key)) = secret_store.get_secret(provider_id) {
-                    if !key.is_empty() {
-                        let provider = MarketDataAppProvider::new(key);
-                        return Ok(Some(Arc::new(provider)));
-                    }
-                }
-                Ok(None)
+                Self::create_keyed_provider(provider_id, secret_store, |key| {
+                    Arc::new(MarketDataAppProvider::new(key))
+                })
             }
             DATA_SOURCE_ALPHA_VANTAGE => {
-                if let Ok(Some(key)) = secret_store.get_secret(provider_id) {
-                    if !key.is_empty() {
-                        let provider = AlphaVantageProvider::new(key);
-                        return Ok(Some(Arc::new(provider)));
-                    }
-                }
-                Ok(None)
+                Self::create_keyed_provider(provider_id, secret_store, |key| {
+                    Arc::new(AlphaVantageProvider::new(key))
+                })
             }
             DATA_SOURCE_METAL_PRICE_API => {
-                if let Ok(Some(key)) = secret_store.get_secret(provider_id) {
-                    if !key.is_empty() {
-                        let provider = MetalPriceApiProvider::new(key);
-                        return Ok(Some(Arc::new(provider)));
-                    }
-                }
-                Ok(None)
+                Self::create_keyed_provider(provider_id, secret_store, |key| {
+                    Arc::new(MetalPriceApiProvider::new(key))
+                })
             }
             DATA_SOURCE_FINNHUB => {
-                if let Ok(Some(key)) = secret_store.get_secret(provider_id) {
-                    if !key.is_empty() {
-                        let provider = FinnhubProvider::new(key);
-                        return Ok(Some(Arc::new(provider)));
-                    }
-                }
-                Ok(None)
+                Self::create_keyed_provider(provider_id, secret_store, |key| {
+                    Arc::new(FinnhubProvider::new(key))
+                })
             }
             DATA_SOURCE_OPENFIGI => {
                 // OpenFIGI doesn't need an API key (free tier)
@@ -232,6 +216,33 @@ impl MarketDataClient {
             }
             _ => {
                 warn!("Unknown provider ID: {}", provider_id);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Helper for providers that require an API key.
+    /// Logs the exact reason if the key is missing or the secret store errors.
+    fn create_keyed_provider(
+        provider_id: &str,
+        secret_store: &Arc<dyn SecretStore>,
+        factory: impl FnOnce(String) -> Arc<dyn wealthfolio_market_data::MarketDataProvider>,
+    ) -> Result<Option<Arc<dyn wealthfolio_market_data::MarketDataProvider>>> {
+        match secret_store.get_secret(provider_id) {
+            Ok(Some(key)) if !key.is_empty() => {
+                info!("{}: API key found (len={}), creating provider", provider_id, key.len());
+                Ok(Some(factory(key)))
+            }
+            Ok(Some(_)) => {
+                warn!("{}: API key is empty, skipping", provider_id);
+                Ok(None)
+            }
+            Ok(None) => {
+                info!("{}: no API key in secret store, skipping", provider_id);
+                Ok(None)
+            }
+            Err(e) => {
+                warn!("{}: secret store error: {:?} — skipping (key may exist but is inaccessible)", provider_id, e);
                 Ok(None)
             }
         }
@@ -316,14 +327,36 @@ impl MarketDataClient {
     }
 
     /// Fetch the latest quote for an asset.
+    ///
+    /// Uses the diagnostic variant of the registry call to log which providers
+    /// were tried, skipped, or failed. This is critical for debugging provider
+    /// selection (e.g. why MarketData.app might be skipped in favour of Yahoo).
     pub async fn fetch_latest_quote(&self, asset: &Asset) -> Result<Quote> {
         let context = self.build_quote_context(asset)?;
 
-        let market_quote = self
+        let (market_result, diagnostics) = self
             .registry
-            .fetch_latest_quote(&context)
-            .await
-            .map_err(MarketDataClientError::from)?;
+            .fetch_latest_quote_with_diagnostics(&context)
+            .await;
+
+        let market_quote = match market_result {
+            Ok(quote) => {
+                debug!(
+                    "Latest quote for {}: provider selection: {}",
+                    asset.id,
+                    diagnostics.summary()
+                );
+                quote
+            }
+            Err(error) => {
+                warn!(
+                    "Latest quote failed for {}: provider selection: {}",
+                    asset.id,
+                    diagnostics.summary()
+                );
+                return Err(MarketDataClientError::MarketData(error).into());
+            }
+        };
 
         Ok(Self::convert_quote(market_quote, &asset.id))
     }

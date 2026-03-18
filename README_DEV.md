@@ -125,6 +125,42 @@ On first launch after a fresh build, macOS will prompt for your password **multi
 # "signingIdentity": "Wealthfolio Dev"
 ```
 
+## Database Location
+
+The database path depends on whether `DATABASE_URL` is set in `.env`:
+
+### With `DATABASE_URL` (default from `.env.sample`)
+
+The `.env` file sets `DATABASE_URL=../db/app.db`. Since `pnpm tauri dev` runs from `apps/tauri/`, this resolves to:
+
+```
+apps/db/app.db
+```
+
+**This is the database your dev build actually uses.** Both backup and restore operations use this path when `DATABASE_URL` is set.
+
+### Without `DATABASE_URL`
+
+If `DATABASE_URL` is empty or unset, Tauri uses its platform app data directory:
+
+```
+~/Library/Application Support/com.teymz.wealthfolio.dev/app.db
+```
+
+### Production app (for reference)
+
+The production Wealthfolio app always uses:
+
+```
+~/Library/Application Support/com.teymz.wealthfolio/app.db
+```
+
+### Important notes
+
+- **Restore goes where `DATABASE_URL` points.** If you restore a backup in the dev build, it writes to `apps/db/app.db` (not the `~/Library/Application Support/` location).
+- **The `com.teymz.wealthfolio.dev/app.db` file may exist but be stale** if `DATABASE_URL` is set — the app ignores it in favor of the env var path.
+- To check which database your dev build is using, go to **Settings → About** in the app — it shows the active database path.
+
 ## Architecture Overview
 
 Wealthfolio can run in two modes:

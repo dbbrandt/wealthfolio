@@ -815,20 +815,70 @@ where
         };
 
         debug!(
-            "Fetching quotes for {} from {} to {}",
-            asset.id, plan.start_date, plan.end_date
+            "Fetching quotes for {} from {} to {} (category={:?})",
+            asset.id, plan.start_date, plan.end_date, plan.category
         );
 
-        // Convert dates to DateTime<Utc>
-        let start_dt = Utc.from_utc_datetime(&plan.start_date.and_hms_opt(0, 0, 0).unwrap());
-        let end_dt = Utc.from_utc_datetime(&plan.end_date.and_hms_opt(23, 59, 59).unwrap());
+        // For incremental syncs of active assets, try the latest-quote endpoint
+        // first. This is cheaper (1 API call) and providers like MarketData.app
+        // expose real-time data via their prices endpoint while their daily
+        // candles endpoint lags by one business day.
+        //
+        // Active/RecentlyClosed categories already imply an incremental sync
+        // (the asset has existing quotes). New and NeedsBackfill categories
+        // require the historical endpoint to fetch full date ranges.
+        let use_latest = matches!(plan.category, SyncCategory::Active | SyncCategory::RecentlyClosed);
 
-        // Fetch quotes via MarketDataClient
         let client = self.client.read().await;
-        match client
-            .fetch_historical_quotes_with_context(asset, start_dt, end_dt)
-            .await
-        {
+
+        let fetch_result = if use_latest {
+            debug!("Using latest-quote endpoint for {} (incremental)", asset.id);
+            match client.fetch_latest_quote(asset).await {
+                Ok(quote) => {
+                    let quote_date = quote.timestamp.date_naive();
+                    if quote_date >= plan.start_date {
+                        Ok(vec![quote])
+                    } else {
+                        // Latest quote is older than our window — fall back to historical
+                        debug!(
+                            "Latest quote for {} is {} (before sync window start {}), falling back to historical",
+                            asset.id, quote_date, plan.start_date
+                        );
+                        let start_dt = Utc.from_utc_datetime(&plan.start_date.and_hms_opt(0, 0, 0).unwrap());
+                        let end_dt = Utc.from_utc_datetime(&plan.end_date.and_hms_opt(23, 59, 59).unwrap());
+                        client
+                            .fetch_historical_quotes_with_context(asset, start_dt, end_dt)
+                            .await
+                            .map_err(|ctx| ctx.error)
+                    }
+                }
+                Err(e) => {
+                    // Latest quote failed — fall back to historical
+                    debug!(
+                        "Latest-quote failed for {}: {:?}, falling back to historical",
+                        asset.id, e
+                    );
+                    let start_dt = Utc.from_utc_datetime(&plan.start_date.and_hms_opt(0, 0, 0).unwrap());
+                    let end_dt = Utc.from_utc_datetime(&plan.end_date.and_hms_opt(23, 59, 59).unwrap());
+                    client
+                        .fetch_historical_quotes_with_context(asset, start_dt, end_dt)
+                        .await
+                        .map_err(|ctx| ctx.error)
+                }
+            }
+        } else {
+            let start_dt = Utc.from_utc_datetime(&plan.start_date.and_hms_opt(0, 0, 0).unwrap());
+            let end_dt = Utc.from_utc_datetime(&plan.end_date.and_hms_opt(23, 59, 59).unwrap());
+            client
+                .fetch_historical_quotes_with_context(asset, start_dt, end_dt)
+                .await
+                .map_err(|ctx| ctx.error)
+        };
+
+        // Drop client lock before processing results
+        drop(client);
+
+        match fetch_result {
             Ok(mut quotes) => {
                 // Sort quotes by timestamp to ensure correct ordering
                 // This is important because we use first()/last() to determine date ranges
@@ -927,10 +977,9 @@ where
                     }
                 }
             }
-            Err(fetch_error) => {
-                let error = fetch_error.error;
+            Err(error) => {
                 let sync_failure_message =
-                    format_sync_failure_message(&error, fetch_error.provider_id.as_deref());
+                    format_sync_failure_message(&error, None);
 
                 if should_treat_backfill_error_as_non_fatal(&plan.category, &error) {
                     if let Err(state_err) = self.sync_state_store.update_after_sync(&asset.id).await
