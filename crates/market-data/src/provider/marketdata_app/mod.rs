@@ -13,7 +13,7 @@
 //! The API returns parallel arrays for OHLCV data with a status field `s` indicating success ("ok") or error.
 
 use async_trait::async_trait;
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, FixedOffset, NaiveTime, TimeZone, Utc};
 use log::warn;
 use reqwest::Client;
 use rust_decimal::Decimal;
@@ -227,12 +227,36 @@ impl MarketDataProvider for MarketDataAppProvider {
                 message: "No timestamp in response".to_string(),
             })?;
 
-        let timestamp = Utc
+        // The real-time API returns the actual market timestamp (e.g., 8pm EDT for
+        // market close). To match the candles format (midnight of trading day), we
+        // convert to US Eastern, extract the date, then build a UTC timestamp at
+        // midnight Eastern. This ensures the quote is stored under the correct
+        // trading day rather than potentially the next UTC day.
+        let raw_timestamp = Utc
             .timestamp_opt(timestamp_unix, 0)
             .single()
             .ok_or_else(|| MarketDataError::ValidationFailed {
                 message: format!("Invalid timestamp: {}", timestamp_unix),
             })?;
+
+        // US Eastern offset: -5 hours (EST) or -4 hours (EDT)
+        // We check if the timestamp falls during DST (roughly Mar-Nov) to pick the right offset.
+        // For market close times this is sufficient; edge cases at DST boundaries are rare.
+        let month = raw_timestamp.month();
+        let eastern_offset_hours = if (3..=10).contains(&month) { -4 } else { -5 };
+        let eastern_tz = FixedOffset::west_opt(eastern_offset_hours * -3600).unwrap();
+
+        // Convert to Eastern to get the trading day
+        let eastern_dt = raw_timestamp.with_timezone(&eastern_tz);
+        let trading_day = eastern_dt.date_naive();
+
+        // Create timestamp at midnight Eastern for the trading day (matches candles)
+        let timestamp = trading_day
+            .and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap())
+            .and_local_timezone(eastern_tz)
+            .single()
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or(raw_timestamp);
 
         let close = Decimal::from_f64_retain(*mid_price).ok_or_else(|| {
             MarketDataError::ValidationFailed {
