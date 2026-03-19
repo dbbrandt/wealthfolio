@@ -5,7 +5,7 @@
 //!
 //! # API Endpoints
 //!
-//! - Latest price: `https://api.marketdata.app/v1/stocks/prices/{symbol}/`
+//! - Latest quote: `https://api.marketdata.app/v1/stocks/quotes/{symbol}/`
 //! - Historical candles: `https://api.marketdata.app/v1/stocks/candles/D/{symbol}?from={start_date}&to={end_date}`
 //!
 //! # Response Format
@@ -58,14 +58,14 @@ struct CandlesResponse {
     t: Option<Vec<i64>>,
 }
 
-/// Response from the prices endpoint for latest quote.
+/// Response from the quotes endpoint for latest quote.
 #[derive(Debug, Deserialize)]
-struct PriceResponse {
+struct QuoteResponse {
     /// Status: "ok" or error message
     s: String,
-    /// Mid price (average of bid and ask)
+    /// Last traded price
     #[serde(default)]
-    mid: Option<Vec<f64>>,
+    last: Option<Vec<f64>>,
     /// Unix timestamps of last update
     #[serde(default)]
     updated: Option<Vec<i64>>,
@@ -190,25 +190,25 @@ impl MarketDataProvider for MarketDataAppProvider {
         instrument: ProviderInstrument,
     ) -> Result<Quote, MarketDataError> {
         let symbol = Self::extract_symbol(&instrument)?;
-        let url = format!("{}/stocks/prices/{}/", BASE_URL, symbol);
+        let url = format!("{}/stocks/quotes/{}/", BASE_URL, symbol);
 
         let response_text = self.fetch(&url).await?;
-        let price_resp: PriceResponse =
+        let quote_resp: QuoteResponse =
             serde_json::from_str(&response_text).map_err(|e| MarketDataError::ProviderError {
                 provider: PROVIDER_ID.to_string(),
                 message: format!("Failed to parse response: {}", e),
             })?;
 
-        if price_resp.s != "ok" {
+        if quote_resp.s != "ok" {
             return Err(MarketDataError::ProviderError {
                 provider: PROVIDER_ID.to_string(),
-                message: format!("API returned status: {}", price_resp.s),
+                message: format!("API returned status: {}", quote_resp.s),
             });
         }
 
-        // Extract the mid price from the response
-        let mid_price = price_resp
-            .mid
+        // Extract the last traded price from the response
+        let last_price = quote_resp
+            .last
             .as_ref()
             .and_then(|arr| arr.first())
             .ok_or_else(|| MarketDataError::ProviderError {
@@ -217,7 +217,7 @@ impl MarketDataProvider for MarketDataAppProvider {
             })?;
 
         // Extract and validate the timestamp
-        let timestamp_unix = price_resp
+        let timestamp_unix = quote_resp
             .updated
             .as_ref()
             .and_then(|arr| arr.first())
@@ -258,9 +258,9 @@ impl MarketDataProvider for MarketDataAppProvider {
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or(raw_timestamp);
 
-        let close = Decimal::from_f64_retain(*mid_price).ok_or_else(|| {
+        let close = Decimal::from_f64_retain(*last_price).ok_or_else(|| {
             MarketDataError::ValidationFailed {
-                message: format!("Failed to convert price {} to Decimal", mid_price),
+                message: format!("Failed to convert price {} to Decimal", last_price),
             }
         })?;
         let currency = Self::get_currency(context);

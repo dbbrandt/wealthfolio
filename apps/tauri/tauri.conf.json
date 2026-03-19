@@ -19,7 +19,7 @@
     ],
     "copyright": "2026 Teymz Inc.",
     "category": "public.app-category.finance",
-    "createUpdaterArtifacts": "v1Compatible",
+    "createUpdaterArtifacts": false,
     "iOS": {
       "developmentTeam": "DYDJ2RNL5H",
       "infoPlist": "Info.ios.plist"
