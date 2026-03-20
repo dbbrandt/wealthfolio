@@ -616,7 +616,7 @@ impl PerformanceService {
             period_end_date: Some(actual_end_date),
             currency,
             period_gain: period_gain.round_dp(DECIMAL_PRECISION),
-            period_return: period_return.round_dp(DECIMAL_PRECISION),
+            period_return: Some(period_return.round_dp(DECIMAL_PRECISION)),
             cumulative_twr: Some(cumulative_twr.round_dp(DECIMAL_PRECISION)),
             gain_loss_amount: Some(gain_loss_amount.round_dp(DECIMAL_PRECISION)),
             annualized_twr: Some(annualized_twr.round_dp(DECIMAL_PRECISION)),

@@ -102,6 +102,15 @@ Copy to Applications:
 cp -R "target/release/bundle/macos/Wealthfolio Dev.app" /Applications/
 ```
 
+The DMG is located in /Users/danielbrandt/LocalProjects/CascadeProjects/precidix/wealthfolio/target/release/bundle/dmg
+It can be installed and then unmounted to do a OSX style DMG install.
+```bash
+cd /Users/danielbrandt/LocalProjects/CascadeProjects/precidix/wealthfolio/target/release/bundle/dmg
+cp Wealthfolio\ Dev_3.1.2_aarch64.dmg ~/Downloads/
+# run the dmg from the finder in downloads
+hdiutil detach "/Volumes/Wealthfolio Dev"
+```
+
 **Note:** The build may show errors about DMG bundling or updater signing — these can be ignored. The `.app` bundle is still created successfully.
 
 ## First Launch: Keychain Password Prompts
@@ -160,6 +169,89 @@ The production Wealthfolio app always uses:
 - **Restore goes where `DATABASE_URL` points.** If you restore a backup in the dev build, it writes to `apps/db/app.db` (not the `~/Library/Application Support/` location).
 - **The `com.teymz.wealthfolio.dev/app.db` file may exist but be stale** if `DATABASE_URL` is set — the app ignores it in favor of the env var path.
 - To check which database your dev build is using, go to **Settings → About** in the app — it shows the active database path.
+
+## Switching Market Data Providers (Yahoo → MarketData.app)
+
+If your database was populated with quotes from Yahoo Finance and you want to switch US securities to use MarketData.app, you need to update two tables:
+
+1. **`assets.provider_config`** - Controls which provider is used when fetching new quotes
+2. **`quote_sync_state.data_source`** - Controls which provider's quotes are checked for existing coverage
+
+Simply changing `quote_sync_state.data_source` alone won't work because the actual provider selection comes from `assets.provider_config.preferred_provider`.
+
+### Check Current State
+
+```bash
+sqlite3 ~/Library/Application\ Support/com.teymz.wealthfolio.dev/app.db "
+SELECT 
+    a.id, 
+    a.display_code,
+    a.instrument_exchange_mic, 
+    json_extract(a.provider_config, '$.preferred_provider') as preferred_provider,
+    qss.data_source
+FROM assets a
+LEFT JOIN quote_sync_state qss ON qss.asset_id = a.id
+WHERE a.instrument_exchange_mic IN ('XNYS', 'XNAS')
+  AND a.quote_mode = 'MARKET'
+LIMIT 10;
+"
+```
+
+### Update US Securities to Use MarketData.app
+
+US exchange MICs: XNYS (NYSE), XNAS (NASDAQ), ARCX (NYSE Arca), XASE (NYSE American), BATS, IEXG
+
+```bash
+sqlite3 ~/Library/Application\ Support/com.teymz.wealthfolio.dev/app.db "
+-- 1. Update assets.provider_config to set preferred_provider
+UPDATE assets
+SET provider_config = json_set(
+    COALESCE(provider_config, '{}'),
+    '$.preferred_provider',
+    'MARKETDATA_APP'
+),
+updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE instrument_exchange_mic IN ('XNYS', 'XNAS', 'ARCX', 'XASE', 'BATS', 'IEXG')
+  AND quote_mode = 'MARKET'
+  AND kind = 'INVESTMENT';
+
+SELECT 'Assets updated: ' || changes();
+
+-- 2. Update quote_sync_state to use MARKETDATA_APP
+UPDATE quote_sync_state
+SET data_source = 'MARKETDATA_APP',
+    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE asset_id IN (
+    SELECT id FROM assets 
+    WHERE instrument_exchange_mic IN ('XNYS', 'XNAS', 'ARCX', 'XASE', 'BATS', 'IEXG')
+      AND quote_mode = 'MARKET'
+      AND kind = 'INVESTMENT'
+);
+
+SELECT 'Sync states updated: ' || changes();
+"
+```
+
+### Rebuild Quote History
+
+After updating the database, run **Rebuild Full History** from Settings → Market Data in the app.
+
+The system will:
+1. See no MARKETDATA_APP quotes exist (quote bounds are per-provider)
+2. Treat all updated assets as "New" → fetch full history from first activity date
+3. Use MarketData.app as the preferred provider
+
+**Note:** No app restart is required. The database changes are read fresh during sync operations.
+
+### Verify MarketData.app is Enabled
+
+```bash
+sqlite3 ~/Library/Application\ Support/com.teymz.wealthfolio.dev/app.db "
+SELECT id, name, enabled, priority FROM market_data_providers WHERE id = 'MARKETDATA_APP';
+"
+```
+
+Ensure `enabled = 1`. If not, enable it in Settings → Market Data → Providers.
 
 ## Architecture Overview
 
