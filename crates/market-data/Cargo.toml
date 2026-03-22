@@ -19,6 +19,7 @@ tracing = "0.1"
 urlencoding = "2"
 yahoo_finance_api = "4.1"
 lazy_static = "1.4"
+chrono-tz = "0.10"
 
 [dev-dependencies]
 rust_decimal_macros = "1"

@@ -89,8 +89,8 @@ mod traits;
 pub use asset_resolver::AssetResolver;
 pub use chain::ResolverChain;
 pub use exchange_metadata::{
-    exchanges_for_currency, mic_to_currency, mic_to_exchange_name, mic_to_market_close,
-    mic_to_timezone,
+    exchanges_for_currency, is_market_hours, mic_to_currency, mic_to_exchange_name,
+    mic_to_market_close, mic_to_timezone,
 };
 pub use exchange_registry::{get_exchange_list, ExchangeInfo};
 pub use exchange_suffixes::{

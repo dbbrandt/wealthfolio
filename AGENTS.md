@@ -142,15 +142,12 @@ Both `pnpm tauri dev` and built DMGs use the same app identifier
 1. Quit Wealthfolio Dev
 2. Run:
    ```sh
-   rm -rf ~/Library/Application\ Support/com.teymz.wealthfolio.dev/
-   rm -rf ~/Library/Caches/com.teymz.wealthfolio.dev/
-   rm -f ~/Library/Preferences/com.teymz.wealthfolio.dev.plist
-   rm -rf ~/Library/Saved\ Application\ State/com.teymz.wealthfolio.dev.savedState/
+   ./scripts/clean-dev-data.sh
    ```
 3. Restart the app — a fresh database will be created
 
 **Note:** If you opened a `.dmg` file, it mounts as a virtual disk in `/Volumes/`.
-Eject before cleanup: `hdiutil detach "/Volumes/Wealthfolio Dev"`
+The script will detect and eject mounted DMGs automatically.
 
 ---
 

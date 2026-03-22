@@ -102,6 +102,9 @@ fn resolve_local_datetime(
 /// Default grace period after market close before considering a new trading day.
 pub const DEFAULT_MARKET_CLOSE_GRACE_MINUTES: i64 = 60;
 
+/// Re-export from market-data crate (single source of truth).
+pub use exchange_metadata::is_market_hours;
+
 pub fn get_days_between(start: NaiveDate, end: NaiveDate) -> Vec<NaiveDate> {
     if start > end {
         return Vec::new();
@@ -203,6 +206,7 @@ pub fn market_calendar_date(now: DateTime<Utc>, mic: Option<&str>) -> NaiveDate 
     }
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,5 +265,45 @@ mod tests {
             end_exclusive_utc,
             Utc.with_ymd_and_hms(2026, 12, 31, 10, 0, 0).unwrap()
         );
+    }
+
+    #[test]
+    fn is_market_hours_returns_false_for_weekends() {
+        // Saturday in US Eastern timezone
+        let saturday = Utc.with_ymd_and_hms(2026, 3, 21, 14, 0, 0).unwrap(); // 10 AM ET Saturday
+        assert!(!is_market_hours(saturday, Some("XNAS")));
+
+        // Sunday
+        let sunday = Utc.with_ymd_and_hms(2026, 3, 22, 14, 0, 0).unwrap(); // 10 AM ET Sunday
+        assert!(!is_market_hours(sunday, Some("XNAS")));
+    }
+
+    #[test]
+    fn is_market_hours_returns_true_before_close() {
+        // Friday March 20, 2026 at 2 PM ET (18:00 UTC) - before 4 PM close
+        let before_close = Utc.with_ymd_and_hms(2026, 3, 20, 18, 0, 0).unwrap();
+        assert!(is_market_hours(before_close, Some("XNAS")));
+    }
+
+    #[test]
+    fn is_market_hours_returns_false_after_close_plus_grace() {
+        // Friday March 20, 2026 at 6 PM ET (22:00 UTC) - well after 4 PM close + 1h grace
+        let after_close = Utc.with_ymd_and_hms(2026, 3, 20, 22, 0, 0).unwrap();
+        assert!(!is_market_hours(after_close, Some("XNAS")));
+    }
+
+    #[test]
+    fn is_market_hours_returns_true_within_grace_period() {
+        // Friday March 20, 2026 at 4:30 PM ET (20:30 UTC) - within 1h grace period
+        let within_grace = Utc.with_ymd_and_hms(2026, 3, 20, 20, 30, 0).unwrap();
+        assert!(is_market_hours(within_grace, Some("XNAS")));
+    }
+
+    #[test]
+    fn is_market_hours_returns_true_for_unknown_exchange() {
+        // Unknown exchange - assume market hours (conservative)
+        let anytime = Utc.with_ymd_and_hms(2026, 3, 20, 22, 0, 0).unwrap();
+        assert!(is_market_hours(anytime, None));
+        assert!(is_market_hours(anytime, Some("UNKNOWN")));
     }
 }

@@ -25,7 +25,7 @@ use std::time::Duration;
 use crate::errors::MarketDataError;
 use crate::models::{Coverage, InstrumentKind, ProviderInstrument, Quote, QuoteContext};
 use crate::provider::{MarketDataProvider, ProviderCapabilities, RateLimit};
-use crate::resolver::ResolverChain;
+use crate::resolver::{exchange_metadata, ResolverChain};
 
 const BASE_URL: &str = "https://api.marketdata.app/v1";
 const PROVIDER_ID: &str = "MARKETDATA_APP";
@@ -190,6 +190,22 @@ impl MarketDataProvider for MarketDataAppProvider {
         instrument: ProviderInstrument,
     ) -> Result<Quote, MarketDataError> {
         let symbol = Self::extract_symbol(&instrument)?;
+        
+        // MarketData.app real-time endpoint returns stale intraday prices after market close.
+        // Fail gracefully when market is closed so the orchestrator can fall back to Yahoo
+        // for reliable closing prices.
+        let mic = match &context.instrument {
+            crate::models::InstrumentId::Equity { mic, .. } => mic.as_deref(),
+            _ => None,
+        };
+        
+        if !exchange_metadata::is_market_hours(Utc::now(), mic) {
+            return Err(MarketDataError::ProviderError {
+                provider: PROVIDER_ID.to_string(),
+                message: "Market closed - real-time endpoint unavailable".to_string(),
+            });
+        }
+        
         let url = format!("{}/stocks/quotes/{}/", BASE_URL, symbol);
 
         let response_text = self.fetch(&url).await?;
@@ -522,16 +538,16 @@ mod tests {
     }
 
     #[test]
-    fn test_price_response_deserialization() {
+    fn test_quote_response_deserialization() {
         let json = r#"{
             "s": "ok",
-            "mid": [150.25],
+            "last": [150.25],
             "updated": [1640000000]
         }"#;
 
-        let price: PriceResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(price.s, "ok");
-        assert_eq!(price.mid.unwrap()[0], 150.25);
+        let quote: QuoteResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(quote.s, "ok");
+        assert_eq!(quote.last.unwrap()[0], 150.25);
     }
 
     #[test]
