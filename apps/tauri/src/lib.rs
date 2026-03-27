@@ -307,6 +307,7 @@ pub fn run() {
             commands::portfolio::calculate_accounts_simple_performance,
             commands::portfolio::update_portfolio,
             commands::portfolio::recalculate_portfolio,
+            commands::portfolio::rebuild_portfolio,
             commands::portfolio::calculate_performance_summary,
             commands::portfolio::calculate_performance_history,
             commands::portfolio::save_manual_holdings,

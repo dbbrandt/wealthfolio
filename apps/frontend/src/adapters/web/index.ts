@@ -139,6 +139,7 @@ export {
   getSnapshotByDate,
   getSnapshots,
   importHoldingsCsv,
+  rebuildPortfolio,
   recalculatePortfolio,
   saveManualHoldings,
   updatePortfolio,

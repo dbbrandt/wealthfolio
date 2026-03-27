@@ -23,6 +23,15 @@ export const recalculatePortfolio = async (): Promise<void> => {
   return invoke<void>("recalculate_portfolio");
 };
 
+/**
+ * Rebuilds portfolio snapshots and valuations without syncing market data.
+ * Much faster than recalculatePortfolio - use when you've fixed activity data.
+ * @param accountIds - Optional list of account IDs to rebuild. If omitted, rebuilds all.
+ */
+export const rebuildPortfolio = async (accountIds?: string[]): Promise<void> => {
+  return invoke<void>("rebuild_portfolio", { accountIds });
+};
+
 export const getHoldings = async (accountId: string): Promise<Holding[]> => {
   return invoke<Holding[]>("get_holdings", { accountId });
 };

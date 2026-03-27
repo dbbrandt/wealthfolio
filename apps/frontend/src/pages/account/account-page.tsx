@@ -23,7 +23,7 @@ import { useMemo, useState } from "react";
 import { ActionPalette, type ActionPaletteGroup } from "@/components/action-palette";
 import { PrivacyToggle } from "@/components/privacy-toggle";
 import { useAccounts } from "@/hooks/use-accounts";
-import { useRecalculatePortfolioMutation } from "@/hooks/use-calculate-portfolio";
+import { useRebuildPortfolioMutation } from "@/hooks/use-calculate-portfolio";
 import { useValuationHistory } from "@/hooks/use-valuation-history";
 import { canAddHoldings } from "@/lib/activity-restrictions";
 import { AccountType } from "@/lib/constants";
@@ -121,7 +121,7 @@ const AccountPage = () => {
   const [isActivitySheetOpen, setIsActivitySheetOpen] = useState(false);
   const [showBulkHoldingsForm, setShowBulkHoldingsForm] = useState(false);
 
-  const recalculatePortfolioMutation = useRecalculatePortfolioMutation();
+  const rebuildPortfolioMutation = useRebuildPortfolioMutation();
   const { accounts, isLoading: isAccountsLoading } = useAccounts();
   const account = useMemo(() => accounts?.find((acc) => acc.id === id), [accounts, id]);
 
@@ -333,8 +333,8 @@ const AccountPage = () => {
                       items: [
                         {
                           icon: Icons.Clock,
-                          label: "Recalculate History",
-                          onClick: () => recalculatePortfolioMutation.mutate(),
+                          label: "Rebuild History",
+                          onClick: () => rebuildPortfolioMutation.mutate([id]),
                         },
                       ],
                     },
@@ -369,8 +369,8 @@ const AccountPage = () => {
                       items: [
                         {
                           icon: Icons.Clock,
-                          label: "Recalculate History",
-                          onClick: () => recalculatePortfolioMutation.mutate(),
+                          label: "Rebuild History",
+                          onClick: () => rebuildPortfolioMutation.mutate([id]),
                         },
                       ],
                     },
