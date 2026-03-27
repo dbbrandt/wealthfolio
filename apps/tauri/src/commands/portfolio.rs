@@ -60,6 +60,22 @@ pub async fn recalculate_portfolio(handle: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Rebuilds portfolio snapshots and valuations without syncing market data.
+/// Use this when you've fixed activity data and just need to recalculate.
+#[tauri::command]
+pub async fn rebuild_portfolio(
+    handle: AppHandle,
+    account_ids: Option<Vec<String>>,
+) -> Result<(), String> {
+    debug!("Emitting PORTFOLIO_TRIGGER_RECALCULATE event (no market sync)...");
+    let payload = PortfolioRequestPayload::builder()
+        .account_ids(account_ids)
+        .market_sync_mode(MarketSyncMode::None)
+        .build();
+    emit_portfolio_trigger_recalculate(&handle, payload);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn update_portfolio(handle: AppHandle) -> Result<(), String> {
     debug!("Emitting PORTFOLIO_TRIGGER_UPDATE event...");
