@@ -88,6 +88,8 @@ export function DeviceSyncSection() {
   const [showReinitConfirmDialog, setShowReinitConfirmDialog] = useState(false);
   const [showRecoveryDialog, setShowRecoveryDialog] = useState(false);
   const [showBootstrapOverwriteDialog, setShowBootstrapOverwriteDialog] = useState(false);
+  const [showForceSyncDialog, setShowForceSyncDialog] = useState(false);
+  const [isForceSyncing, setIsForceSyncing] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isBackingUpBeforeBootstrap, setIsBackingUpBeforeBootstrap] = useState(false);
   const [isUploadingSnapshot, setIsUploadingSnapshot] = useState(false);
@@ -231,6 +233,23 @@ export function DeviceSyncSection() {
   const handleRetryBootstrap = useCallback(async () => {
     await runBootstrapCheck(true);
   }, [runBootstrapCheck]);
+
+  const handleForceSyncFromThisDevice = useCallback(async () => {
+    setIsForceSyncing(true);
+    try {
+      await actions.reinitializeSync.mutateAsync();
+      setShowForceSyncDialog(false);
+      toast.success("Sync reset from this device", {
+        description: "Other devices will need to reconnect to sync with this data.",
+      });
+    } catch (err) {
+      toast.error("Failed to reset sync", {
+        description: err instanceof Error ? err.message : "An unexpected error occurred",
+      });
+    } finally {
+      setIsForceSyncing(false);
+    }
+  }, [actions.reinitializeSync]);
 
   const handleUploadSnapshotNow = useCallback(async () => {
     setIsUploadingSnapshot(true);
@@ -730,6 +749,30 @@ export function DeviceSyncSection() {
                 onLinkDevice={handleLinkAnotherDevice}
               />
             )}
+            {/* Force sync from this device */}
+            {isTrusted && (
+              <div className="mt-4 border-t border-dashed pt-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-medium text-amber-600 dark:text-amber-400">
+                      Dev Tools
+                    </p>
+                    <p className="text-muted-foreground text-xs">
+                      Force all other devices to resync from this device
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowForceSyncDialog(true)}
+                    className="border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-950"
+                  >
+                    <Icons.Undo className="mr-2 h-3.5 w-3.5" />
+                    Force Sync from This Device
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </CardContent>
 
@@ -872,6 +915,47 @@ export function DeviceSyncSection() {
 
       {/* Recovery Dialog */}
       <RecoveryDialog open={showRecoveryDialog} onOpenChange={setShowRecoveryDialog} />
+
+      {/* Force Sync Dialog */}
+      <AlertDialog open={showForceSyncDialog} onOpenChange={setShowForceSyncDialog}>
+        <AlertDialogContent className="max-sm:bg-background/90 gap-8 text-center max-sm:bottom-6 max-sm:left-4 max-sm:right-4 max-sm:top-auto max-sm:w-auto max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-3xl max-sm:shadow-2xl max-sm:backdrop-blur-2xl sm:max-w-lg">
+          <AlertDialogHeader className="items-center gap-4 px-8 text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-full border border-amber-300 bg-amber-100 dark:border-amber-700 dark:bg-amber-900/30">
+              <Icons.Undo className="h-6 w-6 text-amber-600 dark:text-amber-400" />
+            </div>
+            <AlertDialogTitle className="text-center text-xl">
+              Force sync from this device?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-center text-sm">
+              This will reset sync and use this device&apos;s data as the source of truth. All
+              other devices will need to reconnect and will receive this device&apos;s data.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-center">
+            <Button
+              variant="ghost"
+              onClick={() => setShowForceSyncDialog(false)}
+              disabled={isForceSyncing}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleForceSyncFromThisDevice}
+              disabled={isForceSyncing}
+              className="bg-amber-600 hover:bg-amber-700 dark:bg-amber-600 dark:hover:bg-amber-700"
+            >
+              {isForceSyncing ? (
+                <>
+                  <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+                  Resetting...
+                </>
+              ) : (
+                "Force Sync"
+              )}
+            </Button>
+          </div>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

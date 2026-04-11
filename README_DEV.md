@@ -301,6 +301,181 @@ apps/frontend/                # React frontend
 crates/                       # Rust backend crates
 ```
 
+## Device Sync & Connections
+
+Wealthfolio Connect enables syncing data across multiple devices (Mac, iOS, iPad). Understanding how sync works is critical when developing locally or restoring backups.
+
+### Sync Architecture
+
+```
+Device A (Mac)                  Server                      Device B (iOS)
+─────────────────               ──────                      ──────────────
+Local changes → sync_outbox → Push events → oplog → Pull events → Apply locally
+                              (encrypted)          (decrypted)
+```
+
+**Key components:**
+- **Oplog** — Server-side event log of all changes (with garbage collection)
+- **Cursor** — Each device tracks how far it's synced (stored in `sync_cursor` table)
+- **Outbox** — Local queue of changes waiting to be pushed (`sync_outbox` table)
+- **LWW (Last-Write-Wins)** — Conflict resolution by timestamp
+
+### What Gets Synced
+
+Defined in `crates/core/src/sync/app_sync_model.rs`:
+- Accounts, Activities, Assets, Quotes
+- Goals, Taxonomies, Import templates
+- AI threads and messages
+- Holdings snapshots
+
+### Shared vs Separate State (Critical!)
+
+| Component | Storage | Shared Across Builds? |
+|-----------|---------|----------------------|
+| `device_id`, `root_key`, `key_version` | macOS Keychain (`wealthfolio_sync_identity`) | **YES** |
+| `sync_cursor`, `sync_engine_state` | SQLite database | No |
+| Actual data (accounts, activities) | SQLite database | No |
+
+**The keychain is shared across ALL builds** (dev, release, debug) because the service name `wealthfolio_sync_identity` has no app identifier prefix. This means:
+- All builds claim to be the same device to the server
+- But each build may have different data and cursors
+- This can cause sync to appear "up to date" when data actually differs
+
+### Diagnosing Sync Issues
+
+**Check outbox status (sending device):**
+```bash
+sqlite3 apps/db/app.db "SELECT COUNT(*), status FROM sync_outbox GROUP BY status;"
+```
+- `pending` = waiting to push
+- `sent` = successfully pushed  
+- `dead` = permanently failed (key version mismatch, etc.)
+
+**Check engine status:**
+```bash
+sqlite3 apps/db/app.db "SELECT * FROM sync_engine_state;"
+sqlite3 apps/db/app.db "SELECT * FROM sync_cursor;"
+```
+
+### Restoring from Backup — Sync Implications
+
+When you restore a backup, the local cursor goes backwards but the server's oplog doesn't:
+
+```
+Server oplog: [event_1 ... event_200]  cursor=200
+Your restore: cursor=50, old data
+
+Result: Sync tries to pull events 51-200, potentially:
+- Recreating deleted entities
+- Overwriting your restored data
+- Failing due to missing references
+```
+
+**To make a restored device the source of truth:**
+1. Go to Settings → Connected Devices
+2. Click "Force Sync from This Device" (dev builds)
+3. This calls `reinitializeSync()` which:
+   - Resets server oplog
+   - Bumps key version (invalidates other devices)
+   - Uploads snapshot from your current data
+   - Other devices must reconnect
+
+### Sync States
+
+| State | Meaning |
+|-------|----------|
+| `FRESH` | Never enrolled on this device |
+| `REGISTERED` | Enrolled but needs pairing (no E2EE keys) |
+| `READY` | Fully operational |
+| `STALE` | Local key version < server key version |
+| `RECOVERY` | Device ID not found/revoked on server |
+| `ORPHANED` | Keys exist on server but no trusted devices |
+
+### Engine Cycle Statuses
+
+| Status | Meaning |
+|--------|----------|
+| `ok` | Sync completed successfully |
+| `stale_cursor` | Local cursor too old, needs bootstrap snapshot |
+| `wait_snapshot` | Needs snapshot but none available yet |
+| `not_ready` | Device not in READY state |
+| `preempted` | Another sync cycle took over |
+
+---
+
+## Holdings-Based Accounts
+
+Wealthfolio supports two types of accounts:
+
+### Activity-Based Accounts (Default)
+- Positions computed from buy/sell/dividend transactions in `activities` table
+- Account-asset relationship stored via `account_id` + `asset_id` columns in activities
+- Asset's `is_active` flag computed from activity presence
+- Quote syncing works automatically for active assets
+
+### Holdings-Based Accounts (e.g., TIAA)
+- No activities — positions stored as JSON snapshots in `holdings_snapshots` table
+- Account-asset relationship embedded in `positions` JSON field (HashMap of asset_id → position)
+- Typically created via external import or brokerage connection that only provides point-in-time holdings
+
+**Known limitation:** The `is_active` flag on `assets` is computed from the `activities` table. Assets that only appear in holdings snapshots get marked `is_active = 0`, which excludes them from automatic quote syncing.
+
+**Current workaround:**
+```bash
+# 1. Mark holdings-based assets as active
+sqlite3 ~/Library/Application\ Support/com.teymz.wealthfolio.dev/app.db "
+UPDATE assets SET is_active = 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id IN (
+    SELECT DISTINCT json_each.key as asset_id
+    FROM holdings_snapshots, json_each(holdings_snapshots.positions)
+    where holdings_snapshots.account_id = 'a0f9246f-77b5-4248-9bd6-e5d8e642aa04'
+);"
+
+# 2. Ensure quote_sync_state entries exist (quote sync creates these on first run)
+# Run a quote sync from the app after step 1
+```
+
+**Schema reference:**
+```sql
+holdings_snapshots:
+  id, account_id, snapshot_date, positions (JSON), created_at, updated_at
+
+positions JSON structure:
+{
+  "<asset_id>": {
+    "accountId": "...",
+    "assetId": "...",
+    "quantity": 14.73,
+    "averageCost": 483.87,
+    "totalCostBasis": 7128.94,
+    "currency": "USD",
+    ...
+  }
+}
+```
+
+---
+
+## Recent Feature Changes
+
+### Account Group Performance Tracking
+
+Added support for viewing performance metrics at the Account Group level (in addition to individual accounts and total portfolio).
+
+**Key changes:**
+- `PerformanceService` (`crates/core/src/portfolio/performance/performance_service.rs`) — added `account_group` support with aggregated valuations across grouped accounts
+- `TrackedItem` type — extended to include `account_group` variant
+- Account selector components — added GROUPS section to both desktop (`account-selector.tsx`) and mobile (`account-selector-mobile.tsx`) selectors
+- Performance page — wired up group selection
+
+**Architecture:**
+When an account group is selected, the service aggregates daily valuations from all accounts in that group, then runs the same TWR/MWR calculations used for individual accounts.
+
+**Planned extensions:**
+- TBD
+
+---
+
 ## Running Tests
 
 ```bash

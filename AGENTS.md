@@ -125,6 +125,20 @@ Frontend → Adapter (tauri/web) → Command wrapper
            crates/storage-sqlite
 ```
 
+### Development Environment
+
+See `README_DEV.md` for full local development setup including:
+- Prerequisites and initial setup
+- Dev build configuration (separate app identifier)
+- Database location (`DATABASE_URL` env var vs app data directory)
+- Market data provider switching
+- Keychain password prompts
+
+**Database location with `DATABASE_URL` set (default):** `apps/db/app.db`
+**Without `DATABASE_URL`:** `~/Library/Application Support/com.teymz.wealthfolio.dev/app.db`
+
+Check active path in app: Settings → About
+
 ### Cleaning up Wealthfolio Dev for a fresh start
 
 Both `pnpm tauri dev` and built DMGs use the same app identifier
