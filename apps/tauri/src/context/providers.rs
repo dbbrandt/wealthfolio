@@ -301,6 +301,11 @@ pub async fn initialize_context(
     // AI chat repository for thread/message persistence
     let ai_chat_repository = Arc::new(AiChatRepository::new(pool.clone(), writer.clone()));
 
+    // Health service for portfolio health diagnostics
+    let health_dismissal_repository =
+        Arc::new(HealthDismissalRepository::new(pool.clone(), writer.clone()));
+    let health_service = Arc::new(HealthService::new(health_dismissal_repository));
+
     // Create AI environment and chat service
     let ai_environment = Arc::new(TauriAiEnvironment::new(
         base_currency.clone(),
@@ -316,6 +321,7 @@ pub async fn initialize_context(
         allocation_service.clone(),
         performance_service.clone(),
         income_service.clone(),
+        health_service.clone(),
     ));
     let ai_chat_service = Arc::new(ChatService::new(ai_environment, ChatConfig::default()));
 
@@ -330,11 +336,6 @@ pub async fn initialize_context(
         app_version,
     ));
     let device_sync_runtime = Arc::new(DeviceSyncRuntimeState::new());
-
-    // Health service for portfolio health diagnostics
-    let health_dismissal_repository =
-        Arc::new(HealthDismissalRepository::new(pool.clone(), writer.clone()));
-    let health_service = Arc::new(HealthService::new(health_dismissal_repository));
 
     Ok(ContextInitResult {
         context: ServiceContext {

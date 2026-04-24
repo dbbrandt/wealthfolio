@@ -1,0 +1,35 @@
+﻿MSActivity,ActivityType
+Acct Transfer,Deposit
+Adjustment,Adjustment
+Auto Bank Product Deposit,Deposit
+Bank Product Deposit,Deposit
+Bank Product Withdrawal,Withdrawal
+Bought,Buy
+CASH TRANSFER,Deposit
+Cash in Lieu,Credit
+Deposit,Deposit
+Dividend,Dividend
+Dividend Reinvestment,Buy
+Exchange Deliver Out,Transfer Out
+Exchange Received In,Transfer In
+Funds Paid,Withdrawal
+Funds Received,Deposit
+Funds Transferred,Withdrawal
+Interest Income,Interest
+LT Cap Gain Distribution,Credit
+Online Transfer,Deposit
+Qualified Dividend,Dividend
+Return of Capital,Credit
+ST Cap Gain Distribution,Credit
+Security Sold,Sell
+Service Fee,Fee
+Service Fee Adj,Credit
+Sold,Sell
+Stock Spin-Off,Transfer In
+Stock Split,Split
+Tax Exempt Dividend,Dividend
+Tax Withholding,Withdrawal
+Transfer into Account,Transfer In
+Transfer into Acct,Transfer In
+Transfer out of Account,Transfer Out
+Transfer out of Acct,Transfer Out
