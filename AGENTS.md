@@ -139,6 +139,28 @@ See `README_DEV.md` for full local development setup including:
 
 Check active path in app: Settings → About
 
+### Git & Remote Setup
+
+This is a **fork** of [afadil/wealthfolio](https://github.com/afadil/wealthfolio).
+
+- `origin` → `dbbrandt/wealthfolio` (fork)
+- `upstream` → `afadil/wealthfolio` (original project)
+
+When comparing branches or checking for new changes, always check **both** remotes.
+Use `git merge-base --is-ancestor <ref> <branch>` to verify ancestry rather than
+`rev-list --count`, which can be misleading in fork histories.
+
+**Syncing upstream into a feature branch:**
+
+```sh
+git fetch upstream
+git checkout main
+git merge upstream/main
+git push origin main
+git checkout <feature-branch>
+git merge main
+```
+
 ### Cleaning up Wealthfolio Dev for a fresh start
 
 Both `pnpm tauri dev` and built DMGs use the same app identifier
