@@ -1713,6 +1713,69 @@ impl ActivityRepositoryTrait for ActivityRepository {
             )
             .await
     }
+
+    fn get_import_stats(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<wealthfolio_core::activities::ImportRunStats>> {
+        use diesel::sql_query;
+        use diesel::sql_types::{BigInt, Nullable, Text};
+
+        #[derive(QueryableByName, Debug)]
+        struct ImportRunStatsRow {
+            #[diesel(sql_type = Text)]
+            import_run_id: String,
+            #[diesel(sql_type = Text)]
+            imported_at: String,
+            #[diesel(sql_type = Nullable<Text>)]
+            earliest_activity_date: Option<String>,
+            #[diesel(sql_type = Nullable<Text>)]
+            latest_activity_date: Option<String>,
+            #[diesel(sql_type = BigInt)]
+            total_activities: i64,
+        }
+
+        let mut conn = get_connection(&self.pool)?;
+
+        let query = format!(
+            r#"
+            SELECT 
+                ir.id AS import_run_id,
+                ir.started_at AS imported_at,
+                MIN(a.activity_date) AS earliest_activity_date,
+                MAX(a.activity_date) AS latest_activity_date,
+                COUNT(*) AS total_activities
+            FROM activities a
+            JOIN import_runs ir ON a.import_run_id = ir.id
+            WHERE a.import_run_id IN (
+                SELECT ir2.id 
+                FROM import_runs ir2
+                WHERE ir2.source_system = 'csv' 
+                  AND ir2.run_type = 'IMPORT'
+                  AND ir2.status = 'APPLIED'
+                ORDER BY ir2.started_at DESC
+                LIMIT {}
+            )
+            GROUP BY ir.id, ir.started_at
+            ORDER BY latest_activity_date DESC, total_activities DESC
+            "#,
+            limit
+        );
+
+        let rows: Vec<ImportRunStatsRow> =
+            sql_query(query).load(&mut conn).map_err(StorageError::from)?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| wealthfolio_core::activities::ImportRunStats {
+                import_run_id: row.import_run_id,
+                imported_at: row.imported_at,
+                earliest_activity_date: row.earliest_activity_date,
+                latest_activity_date: row.latest_activity_date,
+                total_activities: row.total_activities,
+            })
+            .collect())
+    }
 }
 
 #[cfg(test)]

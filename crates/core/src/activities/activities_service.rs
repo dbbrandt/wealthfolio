@@ -3515,7 +3515,12 @@ impl ActivityServiceTrait for ActivityService {
             }
         }
 
-        // ── 8. Collect event metadata ─────────────────────────────────────────
+        // Set import_run_id on all activities to be inserted
+        for new_act in &mut insertable_new_activities {
+            new_act.import_run_id = Some(import_run_id.clone());
+        }
+
+        // ── 8. Collect event metadata
         let account_ids: Vec<String> = insertable_sources
             .iter()
             .filter_map(|(_, a)| a.account_id.clone())
@@ -3911,6 +3916,10 @@ impl ActivityServiceTrait for ActivityService {
     ) -> Result<PrepareActivitiesResult> {
         self.prepare_activities_internal(activities, account, PreparationMode::Sync)
             .await
+    }
+
+    fn get_import_stats(&self, limit: i64) -> Result<Vec<ImportRunStats>> {
+        self.activity_repository.get_import_stats(limit)
     }
 }
 

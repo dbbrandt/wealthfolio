@@ -27,8 +27,8 @@ pub use activities_model::{
     ActivityUpdate, ActivityUpsert, BrokerActivityProfileConfig, BrokerProfileScope,
     BrokerSyncProfileData, BulkUpsertResult, FieldMappingValue, ImportActivitiesResult,
     ImportActivitiesSummary, ImportAssetCandidate, ImportAssetPreviewItem,
-    ImportAssetPreviewStatus, ImportMapping, ImportMappingData, ImportTemplate, ImportTemplateData,
-    ImportTemplateScope, IncomeData, NewActivity, PrepareActivitiesResult,
+    ImportAssetPreviewStatus, ImportMapping, ImportMappingData, ImportRunStats, ImportTemplate,
+    ImportTemplateData, ImportTemplateScope, IncomeData, NewActivity, PrepareActivitiesResult,
     SaveBrokerSyncProfileRulesRequest, Sort, SymbolInput, TemplateKind,
 };
 pub use activities_service::ActivityService;

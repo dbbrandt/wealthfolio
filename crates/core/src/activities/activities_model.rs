@@ -286,6 +286,7 @@ pub struct NewActivity {
     pub source_record_id: Option<String>, // Provider's record ID
     pub source_group_id: Option<String>,  // Provider grouping key
     pub idempotency_key: Option<String>,  // Stable hash for dedupe
+    pub import_run_id: Option<String>,    // Batch/run identifier
 }
 
 impl NewActivity {
@@ -1467,6 +1468,23 @@ pub struct BulkUpsertResult {
     pub skipped: usize,
 }
 
+/// Statistics for a CSV import run, including activity date range.
+/// Used by automation workflows to determine the last imported activity date.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportRunStats {
+    /// The import run ID
+    pub import_run_id: String,
+    /// When the import was executed
+    pub imported_at: String,
+    /// Earliest activity date in this import
+    pub earliest_activity_date: Option<String>,
+    /// Latest activity date in this import
+    pub latest_activity_date: Option<String>,
+    /// Number of activities in this import
+    pub total_activities: i64,
+}
+
 /// Activity ready for persistence
 #[derive(Debug, Clone)]
 pub struct PreparedActivity {
@@ -1537,6 +1555,7 @@ impl From<ActivityImport> for NewActivity {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         }
     }
 }

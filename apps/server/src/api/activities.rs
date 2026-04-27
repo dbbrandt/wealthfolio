@@ -10,8 +10,8 @@ use axum::{
 use wealthfolio_core::activities::{
     import_type, Activity, ActivityBulkMutationRequest, ActivityBulkMutationResult, ActivityImport,
     ActivitySearchResponse, ActivityUpdate, ImportActivitiesResult, ImportAssetCandidate,
-    ImportAssetPreviewItem, ImportMappingData, ImportTemplateData, NewActivity, ParseConfig,
-    ParsedCsvResult,
+    ImportAssetPreviewItem, ImportMappingData, ImportRunStats, ImportTemplateData, NewActivity,
+    ParseConfig, ParsedCsvResult,
 };
 
 use super::shared::parse_date_optional;
@@ -308,6 +308,25 @@ async fn check_existing_duplicates(
     Ok(Json(CheckDuplicatesResponse { duplicates }))
 }
 
+#[derive(serde::Deserialize)]
+struct ImportStatsQuery {
+    #[serde(default = "default_import_stats_limit")]
+    limit: i64,
+}
+
+fn default_import_stats_limit() -> i64 {
+    5
+}
+
+async fn get_import_stats(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<ImportStatsQuery>,
+) -> ApiResult<Json<Vec<ImportRunStats>>> {
+    let limit = q.limit.clamp(1, 50);
+    let stats = state.activity_service.get_import_stats(limit)?;
+    Ok(Json(stats))
+}
+
 async fn parse_csv_endpoint(
     State(_state): State<Arc<AppState>>,
     mut multipart: Multipart,
@@ -389,4 +408,5 @@ pub fn router() -> Router<Arc<AppState>> {
             "/activities/import/check-duplicates",
             post(check_existing_duplicates),
         )
+        .route("/activities/import/stats", get(get_import_stats))
 }

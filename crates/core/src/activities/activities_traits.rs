@@ -121,6 +121,10 @@ pub trait ActivityRepositoryTrait: Send + Sync {
     /// Returns the number of activities updated.
     async fn reassign_asset(&self, old_asset_id: &str, new_asset_id: &str) -> Result<u32>;
 
+    /// Gets statistics for recent CSV import runs, including activity date ranges.
+    /// Used by automation workflows to determine the last imported activity date.
+    fn get_import_stats(&self, limit: i64) -> Result<Vec<super::ImportRunStats>>;
+
     /// Returns distinct account_ids and currencies for activities with the given asset_id.
     /// Used to plan recalculations after asset merges.
     async fn get_activity_accounts_and_currencies_by_asset_id(
@@ -262,4 +266,8 @@ pub trait ActivityServiceTrait: Send + Sync {
         &self,
         request: SaveBrokerSyncProfileRulesRequest,
     ) -> Result<BrokerSyncProfileData>;
+
+    /// Gets statistics for recent CSV import runs, including activity date ranges.
+    /// Used by automation workflows to determine the last imported activity date.
+    fn get_import_stats(&self, limit: i64) -> Result<Vec<super::ImportRunStats>>;
 }
