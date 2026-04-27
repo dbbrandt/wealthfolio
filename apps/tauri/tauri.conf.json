@@ -30,10 +30,10 @@
       "minimumSystemVersion": "10.13"
     }
   },
-  "productName": "Wealthfolio Dev",
-  "mainBinaryName": "Wealthfolio Dev",
+  "productName": "Wealthfolio LCB",
+  "mainBinaryName": "Wealthfolio LCB",
   "version": "3.2.1",
-  "identifier": "com.teymz.wealthfolio.dev",
+  "identifier": "com.teymz.wealthfolio.lcb",
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY0RjI4MkRFOUYwRDM3N0QKUldSOU53MmYzb0x5WlBySmErU21wcjVHZFNtMW9zdGcyZTBBRWpVcHRDMkoyKzF1bkQ1VmdKbkYK",

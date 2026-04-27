@@ -57,9 +57,9 @@ Edit `apps/tauri/tauri.conf.json`:
       "signingIdentity": "-"   // Change from "Apple Distribution: Teymz Inc ..."
     }
   },
-  "productName": "Wealthfolio Dev",      // Change from "Wealthfolio"
-  "mainBinaryName": "Wealthfolio Dev",   // Change from "Wealthfolio"
-  "identifier": "com.teymz.wealthfolio.dev"  // Change from "com.teymz.wealthfolio"
+  "productName": "Wealthfolio LCB",      // Change from "Wealthfolio"
+  "mainBinaryName": "Wealthfolio LCB",   // Change from "Wealthfolio"
+  "identifier": "com.teymz.wealthfolio.lcb"  // Change from "com.teymz.wealthfolio"
 }
 ```
 
@@ -94,21 +94,21 @@ pnpm tauri build
 
 The built app will be at:
 ```
-target/release/bundle/macos/Wealthfolio Dev.app
+target/release/bundle/macos/Wealthfolio LCB.app
 ```
 
 Copy to Applications:
 ```bash
-cp -R "target/release/bundle/macos/Wealthfolio Dev.app" /Applications/
+cp -R "target/release/bundle/macos/Wealthfolio LCB.app" /Applications/
 ```
 
 The DMG is located in /Users/danielbrandt/LocalProjects/CascadeProjects/precidix/wealthfolio/target/release/bundle/dmg
 It can be installed and then unmounted to do a OSX style DMG install.
 ```bash
 cd /Users/danielbrandt/LocalProjects/CascadeProjects/precidix/wealthfolio/target/release/bundle/dmg
-cp Wealthfolio\ Dev_3.1.2_aarch64.dmg ~/Downloads/
+cp Wealthfolio\ LCB_3.1.2_aarch64.dmg ~/Downloads/
 # run the dmg from the finder in downloads
-hdiutil detach "/Volumes/Wealthfolio Dev"
+hdiutil detach "/Volumes/Wealthfolio LCB"
 ```
 
 **Note:** The build may show errors about DMG bundling or updater signing — these can be ignored. The `.app` bundle is still created successfully.
@@ -126,12 +126,12 @@ On first launch after a fresh build, macOS will prompt for your password **multi
 ```bash
 # Create a self-signed code signing certificate
 # Open Keychain Access → Certificate Assistant → Create a Certificate
-# - Name: "Wealthfolio Dev"
+# - Name: "Wealthfolio LCB"
 # - Certificate Type: Code Signing
 # - Let me override defaults: Yes
 
 # Then update tauri.conf.json:
-# "signingIdentity": "Wealthfolio Dev"
+# "signingIdentity": "Wealthfolio LCB"
 ```
 
 ## Database Location
@@ -153,7 +153,7 @@ apps/db/app.db
 If `DATABASE_URL` is empty or unset, Tauri uses its platform app data directory:
 
 ```
-~/Library/Application Support/com.teymz.wealthfolio.dev/app.db
+~/Library/Application Support/com.teymz.wealthfolio.lcb/app.db
 ```
 
 ### Production app (for reference)
@@ -167,7 +167,7 @@ The production Wealthfolio app always uses:
 ### Important notes
 
 - **Restore goes where `DATABASE_URL` points.** If you restore a backup in the dev build, it writes to `apps/db/app.db` (not the `~/Library/Application Support/` location).
-- **The `com.teymz.wealthfolio.dev/app.db` file may exist but be stale** if `DATABASE_URL` is set — the app ignores it in favor of the env var path.
+- **The `com.teymz.wealthfolio.lcb/app.db` file may exist but be stale** if `DATABASE_URL` is set — the app ignores it in favor of the env var path.
 - To check which database your dev build is using, go to **Settings → About** in the app — it shows the active database path.
 
 ## Switching Market Data Providers (Yahoo → MarketData.app)
@@ -182,7 +182,7 @@ Simply changing `quote_sync_state.data_source` alone won't work because the actu
 ### Check Current State
 
 ```bash
-sqlite3 ~/Library/Application\ Support/com.teymz.wealthfolio.dev/app.db "
+sqlite3 ~/Library/Application\ Support/com.teymz.wealthfolio.lcb/app.db "
 SELECT 
     a.id, 
     a.display_code,
@@ -202,7 +202,7 @@ LIMIT 10;
 US exchange MICs: XNYS (NYSE), XNAS (NASDAQ), ARCX (NYSE Arca), XASE (NYSE American), BATS, IEXG
 
 ```bash
-sqlite3 ~/Library/Application\ Support/com.teymz.wealthfolio.dev/app.db "
+sqlite3 ~/Library/Application\ Support/com.teymz.wealthfolio.lcb/app.db "
 -- 1. Update assets.provider_config to set preferred_provider
 UPDATE assets
 SET provider_config = json_set(
@@ -246,7 +246,7 @@ The system will:
 ### Verify MarketData.app is Enabled
 
 ```bash
-sqlite3 ~/Library/Application\ Support/com.teymz.wealthfolio.dev/app.db "
+sqlite3 ~/Library/Application\ Support/com.teymz.wealthfolio.lcb/app.db "
 SELECT id, name, enabled, priority FROM market_data_providers WHERE id = 'MARKETDATA_APP';
 "
 ```
@@ -285,7 +285,7 @@ If using placeholder URLs in `.env`, the app will crash trying to connect. Eithe
 ### Database corruption
 Delete the database and start fresh:
 ```bash
-rm -rf ~/Library/Application\ Support/com.teymz.wealthfolio.dev/
+rm -rf ~/Library/Application\ Support/com.teymz.wealthfolio.lcb/
 ```
 
 ## File Structure
@@ -423,7 +423,7 @@ Wealthfolio supports two types of accounts:
 **Current workaround:**
 ```bash
 # 1. Mark holdings-based assets as active
-sqlite3 ~/Library/Application\ Support/com.teymz.wealthfolio.dev/app.db "
+sqlite3 ~/Library/Application\ Support/com.teymz.wealthfolio.lcb/app.db "
 UPDATE assets SET is_active = 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 WHERE id IN (
     SELECT DISTINCT json_each.key as asset_id

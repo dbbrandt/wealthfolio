@@ -135,7 +135,7 @@ See `README_DEV.md` for full local development setup including:
 - Keychain password prompts
 
 **Database location with `DATABASE_URL` set (default):** `apps/db/app.db`
-**Without `DATABASE_URL`:** `~/Library/Application Support/com.teymz.wealthfolio.dev/app.db`
+**Without `DATABASE_URL`:** `~/Library/Application Support/com.teymz.wealthfolio.lcb/app.db`
 
 Check active path in app: Settings → About
 
@@ -161,32 +161,32 @@ git checkout <feature-branch>
 git merge main
 ```
 
-### Cleaning up Wealthfolio Dev for a fresh start
+### Cleaning up Wealthfolio LCB for a fresh start
 
 Both `pnpm tauri dev` and built DMGs use the same app identifier
-(`com.teymz.wealthfolio.dev`), so they share the same data directories.
+(`com.teymz.wealthfolio.lcb`), so they share the same data directories.
 
 **Data locations (macOS):**
 
-- `~/Library/Application Support/com.teymz.wealthfolio.dev/` — SQLite database (`app.db`) and backups
-- `~/Library/Caches/com.teymz.wealthfolio.dev/` — WebKit cache
-- `~/Library/Preferences/com.teymz.wealthfolio.dev.plist` — App preferences
-- `~/Library/Saved Application State/com.teymz.wealthfolio.dev.savedState/` — Window state
+- `~/Library/Application Support/com.teymz.wealthfolio.lcb/` — SQLite database (`app.db`) and backups
+- `~/Library/Caches/com.teymz.wealthfolio.lcb/` — WebKit cache
+- `~/Library/Preferences/com.teymz.wealthfolio.lcb.plist` — App preferences
+- `~/Library/Saved Application State/com.teymz.wealthfolio.lcb.savedState/` — Window state
 
 **To reset completely:**
 
-1. Quit Wealthfolio Dev
+1. Quit Wealthfolio LCB
 2. Run:
    ```sh
-   rm -rf ~/Library/Application\ Support/com.teymz.wealthfolio.dev/
-   rm -rf ~/Library/Caches/com.teymz.wealthfolio.dev/
-   rm -f ~/Library/Preferences/com.teymz.wealthfolio.dev.plist
-   rm -rf ~/Library/Saved\ Application\ State/com.teymz.wealthfolio.dev.savedState/
+   rm -rf ~/Library/Application\ Support/com.teymz.wealthfolio.lcb/
+   rm -rf ~/Library/Caches/com.teymz.wealthfolio.lcb/
+   rm -f ~/Library/Preferences/com.teymz.wealthfolio.lcb.plist
+   rm -rf ~/Library/Saved\ Application\ State/com.teymz.wealthfolio.lcb.savedState/
    ```
 3. Restart the app — a fresh database will be created
 
 **Note:** If you opened a `.dmg` file, it mounts as a virtual disk in `/Volumes/`.
-Eject before cleanup: `hdiutil detach "/Volumes/Wealthfolio Dev"`
+Eject before cleanup: `hdiutil detach "/Volumes/Wealthfolio LCB"`
 
 ---
 
