@@ -197,59 +197,6 @@ LIMIT 10;
 "
 ```
 
-### Update US Securities to Use MarketData.app
-
-US exchange MICs: XNYS (NYSE), XNAS (NASDAQ), ARCX (NYSE Arca), XASE (NYSE American), BATS, IEXG
-
-```bash
-sqlite3 ~/Library/Application\ Support/com.teymz.wealthfolio.lcb/app.db "
--- 1. Update assets.provider_config to set preferred_provider
-UPDATE assets
-SET provider_config = json_set(
-    COALESCE(provider_config, '{}'),
-    '$.preferred_provider',
-    'MARKETDATA_APP'
-),
-updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-WHERE instrument_exchange_mic IN ('XNYS', 'XNAS', 'ARCX', 'XASE', 'BATS', 'IEXG')
-  AND quote_mode = 'MARKET'
-  AND kind = 'INVESTMENT';
-
-SELECT 'Assets updated: ' || changes();
-
--- 2. Update quote_sync_state to use MARKETDATA_APP
-UPDATE quote_sync_state
-SET data_source = 'MARKETDATA_APP',
-    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-WHERE asset_id IN (
-    SELECT id FROM assets 
-    WHERE instrument_exchange_mic IN ('XNYS', 'XNAS', 'ARCX', 'XASE', 'BATS', 'IEXG')
-      AND quote_mode = 'MARKET'
-      AND kind = 'INVESTMENT'
-);
-
-SELECT 'Sync states updated: ' || changes();
-"
-```
-
-### Rebuild Quote History
-
-After updating the database, run **Rebuild Full History** from Settings → Market Data in the app.
-
-The system will:
-1. See no MARKETDATA_APP quotes exist (quote bounds are per-provider)
-2. Treat all updated assets as "New" → fetch full history from first activity date
-3. Use MarketData.app as the preferred provider
-
-**Note:** No app restart is required. The database changes are read fresh during sync operations.
-
-### Verify MarketData.app is Enabled
-
-```bash
-sqlite3 ~/Library/Application\ Support/com.teymz.wealthfolio.lcb/app.db "
-SELECT id, name, enabled, priority FROM market_data_providers WHERE id = 'MARKETDATA_APP';
-"
-```
 
 Ensure `enabled = 1`. If not, enable it in Settings → Market Data → Providers.
 
@@ -318,8 +265,24 @@ The Docker build includes Wealthfolio Connect (cloud sync). Key environment vari
 
 | Container Path | Host Path | Purpose |
 |----------------|-----------|----------|
-| `/data` | Docker volume `wealthfolio_data` | Database |
+| `/data` | `../n8n/wealthfolio-data/` | Database (bind mount) |
 | `/backups` | `~/Dropbox/Personal/Financials/WealthFolio/Backup-Web` | Backup files |
+
+### Accessing the Database with DBVisualizer
+
+The database is bind-mounted to the host filesystem for direct access:
+
+```
+/Users/danielbrandt/LocalProjects/CascadeProjects/precidix/n8n/wealthfolio-data/wealthfolio.db
+```
+
+**DBVisualizer Connection:**
+- Driver: SQLite
+- Database file: Path above
+- Read-only access is safe while the container is running
+- For write access, stop the container first: `docker compose stop wealthfolio`
+
+**Note:** The `-shm` and `-wal` files are SQLite WAL journal files — open only the main `.db` file.
 
 ### Rebuilding After Code Changes
 
@@ -536,7 +499,60 @@ positions JSON structure:
   }
 }
 ```
+---
+### Update US Securities to Use MarketData.app
 
+US exchange MICs: XNYS (NYSE), XNAS (NASDAQ), ARCX (NYSE Arca), XASE (NYSE American), BATS, IEXG
+
+```bash
+sqlite3 ~/Library/Application\ Support/com.teymz.wealthfolio.lcb/app.db "
+-- 1. Update assets.provider_config to set preferred_provider
+UPDATE assets
+SET provider_config = json_set(
+    COALESCE(provider_config, '{}'),
+    '$.preferred_provider',
+    'MARKETDATA_APP'
+),
+updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE instrument_exchange_mic IN ('XNYS', 'XNAS', 'ARCX', 'XASE', 'BATS', 'IEXG')
+  AND quote_mode = 'MARKET'
+  AND kind = 'INVESTMENT';
+
+SELECT 'Assets updated: ' || changes();
+
+-- 2. Update quote_sync_state to use MARKETDATA_APP
+UPDATE quote_sync_state
+SET data_source = 'MARKETDATA_APP',
+    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE asset_id IN (
+    SELECT id FROM assets 
+    WHERE instrument_exchange_mic IN ('XNYS', 'XNAS', 'ARCX', 'XASE', 'BATS', 'IEXG')
+      AND quote_mode = 'MARKET'
+      AND kind = 'INVESTMENT'
+);
+
+SELECT 'Sync states updated: ' || changes();
+"
+```
+
+### Rebuild Quote History
+
+After updating the database, run **Rebuild Full History** from Settings → Market Data in the app.
+
+The system will:
+1. See no MARKETDATA_APP quotes exist (quote bounds are per-provider)
+2. Treat all updated assets as "New" → fetch full history from first activity date
+3. Use MarketData.app as the preferred provider
+
+**Note:** No app restart is required. The database changes are read fresh during sync operations.
+
+### Verify MarketData.app is Enabled
+
+```bash
+sqlite3 ~/Library/Application\ Support/com.teymz.wealthfolio.lcb/app.db "
+SELECT id, name, enabled, priority FROM market_data_providers WHERE id = 'MARKETDATA_APP';
+"
+```
 ---
 
 ## Recent Feature Changes
