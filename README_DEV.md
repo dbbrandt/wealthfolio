@@ -267,7 +267,90 @@ Wealthfolio can run in two modes:
 - React frontend served as static files
 - Rust Axum HTTP server
 - Accessible from any browser
-- See main README.md for Docker setup
+- See [Running Wealthfolio Web with n8n](#running-wealthfolio-web-with-n8n) below
+
+---
+
+## Running Wealthfolio Web with n8n
+
+The `prodagen_n8n` repository contains a Docker Compose setup that runs Wealthfolio web alongside n8n workflow automation.
+
+### Prerequisites
+
+- Docker Desktop installed and running
+- Both repositories cloned as siblings:
+  ```
+  precidix/
+  ├── wealthfolio/     # This repository
+  └── n8n/             # prodagen_n8n repository
+  ```
+
+### Quick Start
+
+```bash
+# From the wealthfolio directory
+./scripts/start-web.sh
+```
+
+Or manually:
+
+```bash
+cd ../n8n
+docker volume create n8n_data  # First time only
+docker compose up -d
+```
+
+### Services
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| Wealthfolio | http://localhost:8080 | Web UI |
+| n8n | http://localhost:5678 | Workflow automation |
+
+### Configuration
+
+The Docker build includes Wealthfolio Connect (cloud sync). Key environment variables in `n8n/.env`:
+
+- `WF_SECRET_KEY` — 32-byte base64 key for JWT signing
+- `WF_AUTH_REQUIRED` — Set to `false` for local development
+
+### Volume Mounts
+
+| Container Path | Host Path | Purpose |
+|----------------|-----------|----------|
+| `/data` | Docker volume `wealthfolio_data` | Database |
+| `/backups` | `~/Dropbox/Personal/Financials/WealthFolio/Backup-Web` | Backup files |
+
+### Rebuilding After Code Changes
+
+```bash
+cd ../n8n
+docker compose build wealthfolio
+docker compose up -d wealthfolio
+```
+
+---
+
+## Restoring a Backup (Web Mode)
+
+Use the HTTP API to restore a backup file. The backup must be accessible inside the container at `/backups/`.
+
+### Restore via curl
+
+```bash
+curl --location 'http://localhost:8080/api/v1/utilities/database/restore' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "backupFilePath": "/backups/wealthfolio_backup_20260505_211936.db"
+  }'
+```
+
+### Notes
+
+- The path must be the **container path** (`/backups/...`), not the host path
+- Backups placed in `~/Dropbox/Personal/Financials/WealthFolio/Backup-Web/` on the host are available at `/backups/` in the container
+- The server restarts after restore to reload the database
+- Wealthfolio Connect cursor will be stale after restore — use "Force Sync from This Device" if needed
 
 ## Troubleshooting
 
