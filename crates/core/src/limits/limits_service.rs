@@ -344,6 +344,20 @@ mod tests {
         async fn delete_activity(&self, _: String) -> Result<Activity> {
             unimplemented!()
         }
+        async fn link_transfer_activities(
+            &self,
+            _: String,
+            _: String,
+        ) -> Result<(Activity, Activity)> {
+            unimplemented!()
+        }
+        async fn unlink_transfer_activities(
+            &self,
+            _: String,
+            _: String,
+        ) -> Result<(Activity, Activity)> {
+            unimplemented!()
+        }
         async fn bulk_mutate_activities(
             &self,
             _: Vec<NewActivity>,
@@ -425,6 +439,12 @@ mod tests {
             unimplemented!()
         }
         fn get_activity_bounds_for_assets(
+            &self,
+            _: &[String],
+        ) -> Result<HashMap<String, (Option<NaiveDate>, Option<NaiveDate>)>> {
+            unimplemented!()
+        }
+        fn get_holdings_snapshot_bounds_for_assets(
             &self,
             _: &[String],
         ) -> Result<HashMap<String, (Option<NaiveDate>, Option<NaiveDate>)>> {

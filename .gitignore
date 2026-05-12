@@ -64,6 +64,12 @@ apps/tauri/db/*
 # Rust/Cargo
 target/
 **/*.rs.bk
+# Workspace members share the root Cargo.lock
+apps/server/Cargo.lock
+apps/tauri/Cargo.lock
+crates/core/Cargo.lock
+# addon-sdk is a pnpm workspace member; root pnpm-lock.yaml is authoritative
+packages/addon-sdk/package-lock.json
 
 # Tauri generated
 apps/tauri/gen/schemas/
@@ -86,6 +92,7 @@ Thumbs.db
 /AI-POC-COPY
 # AI tools
 .claude/
+.codex/
 .ralph-tui/
 .kiro/
 .conductor/

@@ -40,6 +40,21 @@ pub trait ActivityRepositoryTrait: Send + Sync {
     async fn create_activity(&self, new_activity: NewActivity) -> Result<Activity>;
     async fn update_activity(&self, activity_update: ActivityUpdate) -> Result<Activity>;
     async fn delete_activity(&self, activity_id: String) -> Result<Activity>;
+    /// Pairs two existing transfer activities by writing a shared `source_group_id`
+    /// and clearing `metadata.flow.is_external` on both. Order of `activity_a_id` /
+    /// `activity_b_id` is irrelevant; the impl resolves which is IN vs OUT.
+    async fn link_transfer_activities(
+        &self,
+        activity_a_id: String,
+        activity_b_id: String,
+    ) -> Result<(Activity, Activity)>;
+    /// Unpairs two linked transfer activities by clearing their shared `source_group_id`
+    /// and marking `metadata.flow.is_external` as true on both rows.
+    async fn unlink_transfer_activities(
+        &self,
+        activity_a_id: String,
+        activity_b_id: String,
+    ) -> Result<(Activity, Activity)>;
     async fn bulk_mutate_activities(
         &self,
         creates: Vec<NewActivity>,
@@ -95,6 +110,17 @@ pub trait ActivityRepositoryTrait: Send + Sync {
     /// Both dates may be None if no activities exist for the asset.
     #[allow(clippy::type_complexity)]
     fn get_activity_bounds_for_assets(
+        &self,
+        asset_ids: &[String],
+    ) -> Result<HashMap<String, (Option<NaiveDate>, Option<NaiveDate>)>>;
+
+    /// Gets the first and last non-archived holdings snapshot dates where each
+    /// asset appears.
+    ///
+    /// Holdings-mode assets can have historical valuation exposure without any
+    /// activity rows, so quote planning must include these bounds too.
+    #[allow(clippy::type_complexity)]
+    fn get_holdings_snapshot_bounds_for_assets(
         &self,
         asset_ids: &[String],
     ) -> Result<HashMap<String, (Option<NaiveDate>, Option<NaiveDate>)>>;
@@ -170,6 +196,16 @@ pub trait ActivityServiceTrait: Send + Sync {
     async fn create_activity(&self, activity: NewActivity) -> Result<Activity>;
     async fn update_activity(&self, activity: ActivityUpdate) -> Result<Activity>;
     async fn delete_activity(&self, activity_id: String) -> Result<Activity>;
+    async fn link_transfer_activities(
+        &self,
+        activity_a_id: String,
+        activity_b_id: String,
+    ) -> Result<(Activity, Activity)>;
+    async fn unlink_transfer_activities(
+        &self,
+        activity_a_id: String,
+        activity_b_id: String,
+    ) -> Result<(Activity, Activity)>;
     async fn bulk_mutate_activities(
         &self,
         request: ActivityBulkMutationRequest,

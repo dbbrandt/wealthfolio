@@ -10,6 +10,10 @@ use wealthfolio_core::activities::{
     Activity, ActivityStatus, ActivityUpdate, ActivityUpsert, NewActivity,
 };
 
+fn normalize_subtype_for_storage(subtype: Option<String>) -> Option<String> {
+    NewActivity::canonicalize_subtype(subtype.as_deref())
+}
+
 /// Helper function to parse a string into a Decimal,
 /// with a fallback for scientific notation by parsing as f64 first.
 fn parse_decimal_string_tolerant(value_str: &str, field_name: &str) -> Decimal {
@@ -56,6 +60,7 @@ pub struct ActivityDB {
     pub activity_type: String,
     pub activity_type_override: Option<String>,
     pub source_type: Option<String>,
+    #[diesel(treat_none_as_null = true)]
     pub subtype: Option<String>,
     pub status: String,
 
@@ -140,6 +145,8 @@ pub struct ActivityDetailsDB {
     pub source_system: Option<String>,
     #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
     pub source_record_id: Option<String>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+    pub source_group_id: Option<String>,
     #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
     pub idempotency_key: Option<String>,
     #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
@@ -306,6 +313,7 @@ impl From<ActivityDetailsDB> for wealthfolio_core::activities::ActivityDetails {
             instrument_type: db.instrument_type,
             source_system: db.source_system,
             source_record_id: db.source_record_id,
+            source_group_id: db.source_group_id,
             idempotency_key: db.idempotency_key,
             import_run_id: db.import_run_id,
             is_user_modified: db.is_user_modified != 0,
@@ -521,7 +529,7 @@ impl From<NewActivity> for ActivityDB {
             activity_type: domain.activity_type,
             activity_type_override: None,
             source_type: None,
-            subtype: domain.subtype,
+            subtype: normalize_subtype_for_storage(domain.subtype),
             status,
 
             // Timing
@@ -599,6 +607,7 @@ impl From<ActivityUpdate> for ActivityDB {
 
         // Extract asset_id before consuming domain fields
         let asset_id = domain.get_symbol_id().map(|s| s.to_string());
+        let subtype = normalize_subtype_for_storage(domain.subtype);
 
         Self {
             id: domain.id,
@@ -609,7 +618,7 @@ impl From<ActivityUpdate> for ActivityDB {
             activity_type: domain.activity_type,
             activity_type_override: None,
             source_type: None,
-            subtype: domain.subtype,
+            subtype,
             status,
 
             // Timing
@@ -695,7 +704,7 @@ impl From<ActivityUpsert> for ActivityDB {
             activity_type: domain.activity_type,
             activity_type_override: None,
             source_type: None,
-            subtype: domain.subtype,
+            subtype: normalize_subtype_for_storage(domain.subtype),
             status,
 
             // Timing

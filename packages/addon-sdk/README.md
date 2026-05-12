@@ -785,6 +785,8 @@ ctx.api.logger.debug('Debug info:', debugData);
 | `marketData.getAssetProfile(assetId)`           | Get asset profile                                         | `market-data`        |
 | `marketData.searchTicker(query)`                | Search for tickers                                        | `market-data`        |
 | `goals.getAll()`                                | Get financial goals                                       | `financial-planning` |
+| `goals.getFunding(goalId)`                      | Get funding rules for a goal                              | `financial-planning` |
+| `goals.saveFunding(goalId, rules)`              | Save funding rules for a goal                             | `financial-planning` |
 | `settings.get()`                                | Get app settings                                          | `settings`           |
 | `query.getClient()`                             | Get shared QueryClient instance                           | None                 |
 
@@ -1330,7 +1332,7 @@ We welcome contributions to improve the addon SDK!
 | **Scope**        | `@wealthfolio`                                                    |
 | **Registry**     | [npmjs.com](https://www.npmjs.com/package/@wealthfolio/addon-sdk) |
 | **License**      | MIT                                                               |
-| **Repository**   | [GitHub](https://github.com/wealthfolio/wealthfolio)                   |
+| **Repository**   | [GitHub](https://github.com/wealthfolio/wealthfolio)              |
 
 ### Version History
 
@@ -1504,7 +1506,8 @@ npm pack && tar -tf *.tgz
 
 1. **Documentation**: Check this README and
    [docs](https://docs.wealthfolio.app/addons)
-2. **Issues**: [GitHub Issues](https://github.com/wealthfolio/wealthfolio/issues)
+2. **Issues**:
+   [GitHub Issues](https://github.com/wealthfolio/wealthfolio/issues)
 3. **Discussions**:
    [GitHub Discussions](https://github.com/wealthfolio/wealthfolio/discussions)
 4. **Discord**: [Community Discord](https://discord.gg/wealthfolio)

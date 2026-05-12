@@ -97,6 +97,14 @@ export const newAccountSchema = z.object({
 
 export const newGoalSchema = z.object({
   id: z.string().uuid().optional(),
+  goalType: z.enum([
+    "retirement",
+    "education",
+    "wedding",
+    "home",
+    "emergency_fund",
+    "custom_save_up",
+  ]),
   title: z.string(),
   description: z.string().optional(),
   targetAmount: z.coerce
@@ -105,7 +113,10 @@ export const newGoalSchema = z.object({
       invalid_type_error: "Target amount must be a positive number.",
     })
     .min(0, { message: "Target amount must be a positive number." }),
-  isAchieved: z.boolean().optional(),
+  coverImageKey: z.string().optional(),
+  currency: z.string().optional(),
+  startDate: z.string().optional(),
+  targetDate: z.string().optional(),
 });
 
 const parseNumberLike = (value: unknown): number | undefined => {
@@ -184,6 +195,9 @@ export const importActivitySchema = z
     fxRate: decimalLikeSchema.nullable().optional(),
     subtype: z.string().optional(),
     forceImport: z.boolean().default(false),
+    /** True when a TRANSFER_IN/OUT crosses the tracked-account boundary
+     * (e.g. RSU grant deposit). Persisted as `metadata.flow.is_external` on the activity. */
+    isExternal: z.boolean().optional(),
   })
   .refine(
     (data) => {
@@ -292,6 +306,20 @@ export const importActivitySchema = z
     {
       message: "Unit price must be positive for buy/sell activities",
       path: ["unitPrice"],
+    },
+  )
+  .refine(
+    (data) => {
+      const activityType = data.activityType;
+      if (isSplitActivity(activityType)) {
+        const amount = parseNumberLike(data.amount);
+        return amount !== undefined && amount > 0;
+      }
+      return true;
+    },
+    {
+      message: "Split ratio must be greater than 0",
+      path: ["amount"],
     },
   )
   .refine(

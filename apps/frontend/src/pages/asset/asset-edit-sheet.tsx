@@ -55,23 +55,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type Path, useFieldArray, useForm, useWatch } from "react-hook-form";
 import * as z from "zod";
 import { toast } from "@wealthfolio/ui/components/ui/use-toast";
+import { serializeProviderConfig } from "./asset-provider-config";
 import { useAssetProfileMutations } from "./hooks/use-asset-profile-mutations";
 
-// Schema for a single provider override (type is derived from asset kind)
+// Schema for a single provider override (type is derived from instrument type)
 const providerOverrideSchema = z.object({
   provider: z.string(),
   symbol: z.string(),
 });
-
-// Derive override type from asset kind
-function getOverrideTypeForKind(kind: string): "equity_symbol" | "crypto_symbol" | "fx_symbol" {
-  switch (kind) {
-    case "FX":
-      return "fx_symbol";
-    default:
-      return "equity_symbol";
-  }
-}
 
 // QuoteMode values matching Rust enum
 const QuoteMode = {
@@ -84,6 +75,7 @@ type QuoteMode = (typeof QuoteMode)[keyof typeof QuoteMode];
 const assetFormSchema = z.object({
   name: z.string().optional(),
   notes: z.string().optional(),
+  isin: z.string().optional(),
   instrumentType: z.string().optional(),
   quoteCcy: z.string().min(1, "Currency is required"),
   instrumentExchangeMic: z.string().optional(),
@@ -131,6 +123,13 @@ const EDIT_INSTRUMENT_TYPE_OPTIONS = [
   { value: "METAL", label: "Metal (Commodity)" },
 ] as const;
 
+function extractIsin(metadata: unknown): string {
+  if (!metadata || typeof metadata !== "object") return "";
+  const identifiers = (metadata as Record<string, unknown>).identifiers;
+  if (!identifiers || typeof identifiers !== "object") return "";
+  return ((identifiers as Record<string, unknown>).isin as string) ?? "";
+}
+
 // Parse provider overrides from config JSON (supports nested and flat formats)
 function parseProviderOverrides(
   config: Record<string, unknown> | null | undefined,
@@ -165,41 +164,6 @@ function parsePreferredProvider(
     return typeof code === "string" ? `CUSTOM:${code}` : pref;
   }
   return pref;
-}
-
-// Serialize form values to nested provider config JSON
-function serializeProviderConfig(
-  preferredProvider: string | undefined,
-  overrides: ProviderOverride[],
-  assetKind: string,
-): Record<string, unknown> | null {
-  const overrideType = getOverrideTypeForKind(assetKind);
-  const overridesMap: Record<string, unknown> = {};
-  for (const override of overrides ?? []) {
-    if (override.provider && override.symbol) {
-      overridesMap[override.provider] = {
-        type: overrideType,
-        symbol: override.symbol,
-      };
-    }
-  }
-  const hasOverrides = Object.keys(overridesMap).length > 0;
-
-  // Handle CUSTOM:<code> format
-  let actualProvider = preferredProvider;
-  let customProviderCode: string | undefined;
-  if (preferredProvider?.startsWith("CUSTOM:")) {
-    actualProvider = "CUSTOM_SCRAPER";
-    customProviderCode = preferredProvider.slice("CUSTOM:".length);
-  }
-
-  const hasPref = !!actualProvider;
-  if (!hasOverrides && !hasPref) return null;
-  const result: Record<string, unknown> = {};
-  if (hasPref) result.preferred_provider = actualProvider;
-  if (customProviderCode) result.custom_provider_code = customProviderCode;
-  if (hasOverrides) result.overrides = overridesMap;
-  return result;
 }
 
 type EditTab = "general" | "classification" | "market-data" | "fx-settings";
@@ -557,6 +521,7 @@ export function AssetEditSheet({
     defaultValues: {
       name: asset?.name ?? "",
       notes: asset?.notes ?? "",
+      isin: extractIsin(asset?.metadata),
       instrumentType: asset?.instrumentType ?? "",
       quoteCcy: asset?.quoteCcy ?? "",
       instrumentExchangeMic: normalizeMic(asset?.instrumentExchangeMic),
@@ -585,6 +550,7 @@ export function AssetEditSheet({
       form.reset({
         name: asset.name ?? "",
         notes: asset.notes ?? "",
+        isin: extractIsin(asset.metadata),
         instrumentType: asset.instrumentType ?? "",
         quoteCcy: asset.quoteCcy ?? "",
         instrumentExchangeMic: normalizeMic(asset.instrumentExchangeMic),
@@ -622,11 +588,28 @@ export function AssetEditSheet({
       const serializedOverrides = serializeProviderConfig(
         values.preferredProvider,
         values.providerConfig ?? [],
-        asset.kind ?? "INVESTMENT",
+        values.instrumentType || asset.instrumentType,
       );
       const normalizedMic = normalizeMic(values.instrumentExchangeMic);
 
       try {
+        // Merge ISIN into existing metadata without clobbering other fields
+        const existingMeta: Record<string, unknown> = asset.metadata ?? {};
+        const existingIdentifiers: Record<string, unknown> =
+          typeof existingMeta.identifiers === "object" && existingMeta.identifiers !== null
+            ? (existingMeta.identifiers as Record<string, unknown>)
+            : {};
+        const isinTrimmed = values.isin?.trim() ?? "";
+        const newIdentifiers = isinTrimmed
+          ? { ...existingIdentifiers, isin: isinTrimmed }
+          : Object.fromEntries(Object.entries(existingIdentifiers).filter(([k]) => k !== "isin"));
+        const newMetadata = {
+          ...existingMeta,
+          ...(Object.keys(newIdentifiers).length > 0
+            ? { identifiers: newIdentifiers }
+            : { identifiers: undefined }),
+        };
+
         // Update profile with all fields including quote mode
         await updateAssetProfileMutation.mutateAsync({
           id: asset.id,
@@ -638,6 +621,7 @@ export function AssetEditSheet({
           quoteCcy: values.quoteCcy,
           instrumentExchangeMic: normalizedMic || null,
           providerConfig: serializedOverrides,
+          metadata: newMetadata,
         });
 
         onOpenChange(false);
@@ -737,6 +721,25 @@ export function AssetEditSheet({
 
                       <FormField
                         control={form.control}
+                        name="isin"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>ISIN</FormLabel>
+                            <FormControl>
+                              <Input
+                                placeholder="e.g. FR0010959676"
+                                className="font-mono uppercase"
+                                {...field}
+                                onChange={(e) => field.onChange(e.target.value.toUpperCase())}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
                         name="notes"
                         render={({ field }) => (
                           <FormItem>
@@ -800,6 +803,25 @@ export function AssetEditSheet({
                             <FormLabel>Name</FormLabel>
                             <FormControl>
                               <Input placeholder="Asset display name" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="isin"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>ISIN</FormLabel>
+                            <FormControl>
+                              <Input
+                                placeholder="e.g. FR0010959676"
+                                className="font-mono uppercase"
+                                {...field}
+                                onChange={(e) => field.onChange(e.target.value.toUpperCase())}
+                              />
                             </FormControl>
                             <FormMessage />
                           </FormItem>

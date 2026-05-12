@@ -192,6 +192,14 @@ pub trait AssetRepositoryTrait: Send + Sync {
     /// Used when new activities reference a previously deactivated asset.
     async fn reactivate(&self, asset_id: &str) -> Result<()>;
 
+    /// Reactivates multiple assets.
+    async fn reactivate_batch(&self, asset_ids: &[String]) -> Result<()> {
+        for asset_id in asset_ids {
+            self.reactivate(asset_id).await?;
+        }
+        Ok(())
+    }
+
     /// Copies user-editable fields from source asset to target asset.
     /// Used during UNKNOWN asset merge to preserve user customizations.
     async fn copy_user_metadata(&self, source_id: &str, target_id: &str) -> Result<()>;
@@ -204,7 +212,7 @@ pub trait AssetRepositoryTrait: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::errors::Error;
+    use crate::errors::{DatabaseError, Error};
 
     struct TestAssetService;
 
@@ -215,7 +223,9 @@ mod tests {
         }
 
         fn get_asset_by_id(&self, _asset_id: &str) -> Result<Asset> {
-            Err(Error::Unexpected("Asset not found".to_string()))
+            Err(Error::Database(DatabaseError::NotFound(
+                "Asset not found".to_string(),
+            )))
         }
 
         async fn delete_asset(&self, _asset_id: &str) -> Result<()> {

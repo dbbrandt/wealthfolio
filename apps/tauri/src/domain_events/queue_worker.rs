@@ -8,12 +8,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use log::{debug, error, info, warn};
+use rust_decimal::prelude::ToPrimitive;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 use wealthfolio_core::constants::PORTFOLIO_TOTAL_ACCOUNT_ID;
 use wealthfolio_core::events::DomainEvent;
 use wealthfolio_core::health::HealthServiceTrait;
-use wealthfolio_core::portfolio::snapshot::SnapshotRecalcMode;
+use wealthfolio_core::portfolio::snapshot::{
+    reconcile_quote_sync_from_latest_total_snapshot, SnapshotRecalcMode,
+};
 use wealthfolio_core::portfolio::valuation::ValuationRecalcMode;
 
 #[cfg(feature = "connect-sync")]
@@ -186,6 +189,10 @@ async fn process_event_batch(
     let timezone = context.get_timezone();
     if let Some(payload) = plan_portfolio_job(events, &timezone) {
         run_portfolio_job(app_handle, context, payload).await;
+
+        // 2b. Refresh all active goal summaries after portfolio valuations update.
+        // This keeps goal cards current without client-side polling.
+        refresh_all_goal_summaries(context).await;
     }
 
     #[cfg(feature = "connect-sync")]
@@ -255,6 +262,19 @@ async fn run_portfolio_job(
     // Only perform market sync if the mode requires it
     if market_sync_mode.requires_sync() {
         let market_data_service = context.quote_service();
+        let snapshot_service = context.snapshot_service();
+
+        if let Err(e) = reconcile_quote_sync_from_latest_total_snapshot(
+            snapshot_service.as_ref(),
+            market_data_service.as_ref(),
+        )
+        .await
+        {
+            warn!(
+                "Failed to reconcile quote sync state from latest holdings: {}. Quote sync planning may be affected.",
+                e
+            );
+        }
 
         // Emit sync start event
         if let Err(e) = app_handle.emit(MARKET_SYNC_START, &()) {
@@ -278,11 +298,19 @@ async fn run_portfolio_job(
         match sync_result {
             Ok(result) => {
                 let failed_syncs = result.failures;
+                let skipped_reasons = result
+                    .skipped_reasons
+                    .into_iter()
+                    .map(|(asset_id, reason)| (asset_id, reason.to_string()))
+                    .collect();
 
                 let health_service = context.health_service();
                 health_service.clear_cache().await;
 
-                let result_payload = MarketSyncResult { failed_syncs };
+                let result_payload = MarketSyncResult {
+                    failed_syncs,
+                    skipped_reasons,
+                };
                 if let Err(e) = app_handle.emit(MARKET_SYNC_COMPLETE, &result_payload) {
                     error!("Failed to emit market:sync-complete event: {}", e);
                 }
@@ -393,27 +421,18 @@ async fn run_portfolio_calculation(
         return;
     }
 
-    // Update position status from TOTAL snapshot
-    if let Ok(Some(total_snapshot)) =
-        snapshot_service.get_latest_holdings_snapshot(PORTFOLIO_TOTAL_ACCOUNT_ID)
+    // Update position status from TOTAL snapshot for quote sync planning.
+    let quote_service = context.quote_service();
+    if let Err(e) = reconcile_quote_sync_from_latest_total_snapshot(
+        snapshot_service.as_ref(),
+        quote_service.as_ref(),
+    )
+    .await
     {
-        let current_holdings: std::collections::HashMap<String, rust_decimal::Decimal> =
-            total_snapshot
-                .positions
-                .iter()
-                .map(|(asset_id, position)| (asset_id.clone(), position.quantity))
-                .collect();
-
-        let quote_service = context.quote_service();
-        if let Err(e) = quote_service
-            .update_position_status_from_holdings(&current_holdings)
-            .await
-        {
-            warn!(
-                "Failed to update position status from holdings: {}. Quote sync planning may be affected.",
-                e
-            );
-        }
+        warn!(
+            "Failed to update position status from holdings: {}. Quote sync planning may be affected.",
+            e
+        );
     }
 
     // Ensure TOTAL is included in valuation calculation
@@ -444,6 +463,88 @@ async fn run_portfolio_calculation(
     if let Err(e) = app_handle.emit(PORTFOLIO_UPDATE_COMPLETE, &()) {
         error!("Failed to emit portfolio:update-complete event: {}", e);
     }
+}
+
+/// Refreshes cached summary fields for all active goals.
+///
+/// Called after portfolio valuations are recalculated so that goal dashboard
+/// cards always reflect the latest account values without client-side polling.
+async fn refresh_all_goal_summaries(context: &Arc<ServiceContext>) {
+    let goals = match context.goal_service().get_goals() {
+        Ok(g) => g,
+        Err(e) => {
+            warn!("Failed to load goals for summary refresh: {}", e);
+            return;
+        }
+    };
+
+    let active_goals: Vec<_> = goals
+        .iter()
+        .filter(|g| g.status_lifecycle == "active")
+        .collect();
+
+    if active_goals.is_empty() {
+        return;
+    }
+
+    // Fetch valuations once for all accounts
+    let accounts = match context.account_service().get_active_non_archived_accounts() {
+        Ok(a) => a,
+        Err(e) => {
+            warn!("Failed to load accounts for goal summary refresh: {}", e);
+            return;
+        }
+    };
+    let account_ids: Vec<String> = accounts.into_iter().map(|a| a.id).collect();
+    let valuations = match context
+        .valuation_service()
+        .get_latest_valuations(&account_ids)
+    {
+        Ok(v) => v,
+        Err(e) => {
+            warn!("Failed to load valuations for goal summary refresh: {}", e);
+            return;
+        }
+    };
+
+    let mut valuation_map = std::collections::HashMap::new();
+    for v in &valuations {
+        let Some(total) = v.total_value.to_f64() else {
+            warn!(
+                "Skipping goal summary refresh: invalid valuation total for account {}",
+                v.account_id
+            );
+            return;
+        };
+        let Some(fx) = v.fx_rate_to_base.to_f64() else {
+            warn!(
+                "Skipping goal summary refresh: invalid FX rate for account {}",
+                v.account_id
+            );
+            return;
+        };
+        let value_in_base = total * fx;
+        valuation_map.insert(v.account_id.clone(), value_in_base);
+    }
+
+    // Refresh each active goal
+    for goal in active_goals {
+        if let Err(e) = context
+            .goal_service()
+            .refresh_goal_summary(&goal.id, &valuation_map)
+            .await
+        {
+            debug!("Failed to refresh summary for goal {}: {}", goal.id, e);
+        }
+    }
+
+    debug!(
+        "Refreshed summaries for {} active goal(s)",
+        goals
+            .iter()
+            .filter(|g| g.status_lifecycle == "active")
+            .count()
+    );
 }
 
 #[cfg(test)]
