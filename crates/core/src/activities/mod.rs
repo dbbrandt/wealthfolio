@@ -29,7 +29,7 @@ pub use activities_model::{
     ImportActivitiesResult, ImportActivitiesSummary, ImportAssetCandidate, ImportAssetPreviewItem,
     ImportAssetPreviewStatus, ImportMapping, ImportMappingData, ImportRunStats, ImportTemplate,
     ImportTemplateData, ImportTemplateScope, IncomeData, NewActivity, PrepareActivitiesResult,
-    SaveBrokerSyncProfileRulesRequest, Sort, SymbolInput, TemplateKind,
+    SaveBrokerSyncProfileRulesRequest, Sort, TemplateKind,
 };
 pub use activities_service::ActivityService;
 pub use activities_traits::{ActivityRepositoryTrait, ActivityServiceTrait};
