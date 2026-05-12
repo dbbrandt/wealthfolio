@@ -141,10 +141,10 @@ Check active path in app: Settings → About
 
 ### Git & Remote Setup
 
-This is a **fork** of [afadil/wealthfolio](https://github.com/afadil/wealthfolio).
+This is a **fork** of [wealthfolio/wealthfolio](https://github.com/wealthfolio/wealthfolio).
 
 - `origin` → `dbbrandt/wealthfolio` (fork)
-- `upstream` → `afadil/wealthfolio` (original project)
+- `upstream` → `wealthfolio/wealthfolio` (original project)
 
 When comparing branches or checking for new changes, always check **both** remotes.
 Use `git merge-base --is-ancestor <ref> <branch>` to verify ancestry rather than
