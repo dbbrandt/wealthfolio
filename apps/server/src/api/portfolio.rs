@@ -49,6 +49,19 @@ async fn recalculate_portfolio(
     Ok(StatusCode::ACCEPTED)
 }
 
+async fn rebuild_portfolio(
+    State(state): State<Arc<AppState>>,
+    body: Option<Json<PortfolioRequestBody>>,
+) -> ApiResult<StatusCode> {
+    // Rebuild history without syncing market data — fast recalc when activities have
+    // been edited but quotes are already current. Always forces MarketSyncMode::None.
+    let mut request = body.map(|Json(inner)| inner).unwrap_or_default();
+    request.market_sync_mode = MarketSyncMode::None;
+    let cfg = request.into_config(true);
+    enqueue_portfolio_job(state, cfg);
+    Ok(StatusCode::ACCEPTED)
+}
+
 async fn stream_events(
     State(state): State<Arc<AppState>>,
 ) -> Sse<impl Stream<Item = Result<SseEvent, Infallible>>> {
@@ -87,5 +100,6 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/portfolio/update", post(update_portfolio))
         .route("/portfolio/recalculate", post(recalculate_portfolio))
+        .route("/portfolio/rebuild", post(rebuild_portfolio))
         .route("/events/stream", get(stream_events))
 }

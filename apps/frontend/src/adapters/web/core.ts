@@ -55,6 +55,7 @@ export const COMMANDS: CommandMap = {
   check_holdings_import: { method: "POST", path: "/snapshots/import/check" },
   update_portfolio: { method: "POST", path: "/portfolio/update" },
   recalculate_portfolio: { method: "POST", path: "/portfolio/recalculate" },
+  rebuild_portfolio: { method: "POST", path: "/portfolio/rebuild" },
   // Performance
   calculate_accounts_simple_performance: { method: "POST", path: "/performance/accounts/simple" },
   calculate_performance_history: { method: "POST", path: "/performance/history" },
@@ -510,6 +511,11 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       break;
     }
     case "calculate_accounts_simple_performance": {
+      const { accountIds } = (payload ?? {}) as { accountIds?: string[] };
+      body = JSON.stringify({ accountIds });
+      break;
+    }
+    case "rebuild_portfolio": {
       const { accountIds } = (payload ?? {}) as { accountIds?: string[] };
       body = JSON.stringify({ accountIds });
       break;
