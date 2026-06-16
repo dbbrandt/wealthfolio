@@ -15,7 +15,7 @@ import {
 } from "@/adapters";
 import { usePortfolioSyncOptional } from "@/context/portfolio-sync-context";
 import { useIsMobileViewport } from "@/hooks/use-platform";
-import { QueryKeys } from "@/lib/query-keys";
+import { shouldInvalidateAfterPortfolioUpdate } from "@/lib/query-invalidation";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
@@ -29,31 +29,8 @@ const TOAST_IDS = {
   brokerSyncStart: "broker-sync-start",
 } as const;
 
-const CLOUD_SYNC_INVALIDATION_EXCLUSIONS = new Set<string>([
-  QueryKeys.BROKER_CONNECTIONS,
-  QueryKeys.BROKER_ACCOUNTS,
-  QueryKeys.BROKER_SYNC_STATES,
-  QueryKeys.IMPORT_RUNS,
-  QueryKeys.USER_INFO,
-  QueryKeys.SUBSCRIPTION_PLANS,
-  QueryKeys.SUBSCRIPTION_PLANS_PUBLIC,
-  QueryKeys.SYNCED_ACCOUNTS,
-  QueryKeys.PLATFORMS,
-]);
-
-function shouldInvalidateAfterPortfolioUpdate(queryKey: readonly unknown[]): boolean {
-  const rootKey = queryKey[0];
-
-  if (typeof rootKey === "string" && CLOUD_SYNC_INVALIDATION_EXCLUSIONS.has(rootKey)) {
-    return false;
-  }
-
-  if (rootKey === "sync") {
-    return false;
-  }
-
-  return true;
-}
+const BROKER_SYNC_FAILURE_DESCRIPTION =
+  "We couldn't sync your broker data. Please try again later.";
 
 interface MarketSyncCompletePayload {
   failed_syncs?: [string, string][];
@@ -267,9 +244,10 @@ const useGlobalEventListener = () => {
         }
       } else {
         toast.error("Broker Sync Failed", {
-          description: message,
+          description: BROKER_SYNC_FAILURE_DESCRIPTION,
           duration: 10000,
         });
+        logger.error("Broker sync failed: " + message);
       }
     };
 
@@ -278,9 +256,10 @@ const useGlobalEventListener = () => {
       // Dismiss the loading toast
       toast.dismiss(TOAST_IDS.brokerSyncStart);
       toast.error("Broker Sync Failed", {
-        description: error,
+        description: BROKER_SYNC_FAILURE_DESCRIPTION,
         duration: 10000,
       });
+      logger.error("Broker sync error: " + error);
     };
 
     const setupListeners = async () => {

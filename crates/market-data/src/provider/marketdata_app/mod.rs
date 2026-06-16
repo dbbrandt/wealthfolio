@@ -173,6 +173,7 @@ impl MarketDataProvider for MarketDataAppProvider {
             supports_historical: true,
             supports_search: false,
             supports_profile: false,
+            supports_dividends: false,
         }
     }
 
@@ -403,6 +404,7 @@ mod tests {
                 base: Cow::Borrowed("EUR"),
                 quote: Cow::Borrowed(quote),
             },
+            identifiers: Default::default(),
             overrides: None,
             currency_hint: currency_hint.map(Cow::Borrowed),
             preferred_provider: None,

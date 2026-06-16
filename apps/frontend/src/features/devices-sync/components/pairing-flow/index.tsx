@@ -2,11 +2,22 @@
 // Main component that orchestrates the pairing flow (issuer and claimer)
 // =====================================================================
 
-import { backupDatabase, logger, openFileSaveDialog } from "@/adapters";
+import {
+  backupDatabase,
+  backupDatabaseToPath,
+  backupDatabaseToPendingExport,
+  isWeb,
+  logger,
+  openFolderDialog,
+  saveAppDataFileViaPicker,
+} from "@/adapters";
+import { getPlatform as getRuntimePlatform } from "@/hooks/use-platform";
 import { Icons } from "@wealthfolio/ui";
 import { Button } from "@wealthfolio/ui/components/ui/button";
 import { useEffect, useRef, useCallback, useState } from "react";
 import { usePairingIssuer, usePairingClaimer, useSyncStatus } from "../../hooks";
+import type { PairingBootstrapState } from "../../hooks";
+import { logSyncError, userFacingSyncErrorMessage } from "../../utils/error-messages";
 import { DisplayCode } from "./display-code";
 import { SASVerification } from "./sas-verification";
 import { WaitingState } from "./waiting-state";
@@ -16,6 +27,7 @@ import { EnterCode } from "./enter-code";
 interface PairingFlowProps {
   onComplete?: () => void;
   onCancel?: () => void;
+  onBootstrapStateChange?: (state: PairingBootstrapState) => void;
   /** Title shown during the initial step (display_code for issuer, enter_code for claimer) */
   title?: string;
   /** Description shown during the initial step */
@@ -28,9 +40,11 @@ interface PairingFlowProps {
 function StepHeader({ title, description }: { title?: string; description?: string }) {
   if (!title) return null;
   return (
-    <div className="mb-1 text-center">
-      <p className="text-foreground text-base font-semibold">{title}</p>
-      {description && <p className="text-muted-foreground mt-1 text-sm">{description}</p>}
+    <div className="mb-5 text-center">
+      <p className="text-foreground text-base font-semibold leading-6">{title}</p>
+      {description && (
+        <p className="text-muted-foreground mt-1.5 text-sm leading-5">{description}</p>
+      )}
     </div>
   );
 }
@@ -38,6 +52,7 @@ function StepHeader({ title, description }: { title?: string; description?: stri
 export function PairingFlow({
   onComplete,
   onCancel,
+  onBootstrapStateChange,
   title,
   description,
   forceRole,
@@ -57,6 +72,7 @@ export function PairingFlow({
       <IssuerFlow
         onComplete={onComplete}
         onCancel={onCancel}
+        onBootstrapStateChange={onBootstrapStateChange}
         title={title}
         description={description}
       />
@@ -66,6 +82,7 @@ export function PairingFlow({
       <ClaimerFlow
         onComplete={onComplete}
         onCancel={onCancel}
+        onBootstrapStateChange={onBootstrapStateChange}
         title={title}
         description={description}
       />
@@ -166,13 +183,20 @@ function IssuerFlow({ onComplete, onCancel, title, description }: PairingFlowPro
 }
 
 // Claimer Flow (untrusted device - enters code and receives keys)
-function ClaimerFlow({ onComplete, onCancel, title, description }: PairingFlowProps) {
+function ClaimerFlow({
+  onComplete,
+  onCancel,
+  onBootstrapStateChange,
+  title,
+  description,
+}: PairingFlowProps) {
   const {
     step,
     error,
     sas,
     overwriteInfo,
     isApprovingOverwrite,
+    bootstrapFlowState,
     submitCode,
     approveOverwrite,
     cancel,
@@ -180,6 +204,11 @@ function ClaimerFlow({ onComplete, onCancel, title, description }: PairingFlowPr
   } = usePairingClaimer();
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [backupError, setBackupError] = useState<string | null>(null);
+
+  useEffect(() => {
+    onBootstrapStateChange?.(bootstrapFlowState);
+    return () => onBootstrapStateChange?.("idle");
+  }, [bootstrapFlowState, onBootstrapStateChange]);
 
   const handleCancel = useCallback(async () => {
     await cancel();
@@ -194,12 +223,29 @@ function ClaimerFlow({ onComplete, onCancel, title, description }: PairingFlowPr
     setIsBackingUp(true);
     setBackupError(null);
     try {
-      const { filename, data } = await backupDatabase();
-      const saved = await openFileSaveDialog(data, filename);
-      if (!saved) return;
+      if (isWeb) {
+        await backupDatabase();
+      } else {
+        const runtimePlatform = await getRuntimePlatform();
+        if (runtimePlatform.is_desktop) {
+          const selectedDir = await openFolderDialog();
+          if (!selectedDir) return;
+          await backupDatabaseToPath(selectedDir);
+        } else {
+          if (runtimePlatform.os !== "ios") {
+            throw new Error(
+              "Backup before device sync is currently supported on desktop, web, and iOS only",
+            );
+          }
+          const { relativePath, filename } = await backupDatabaseToPendingExport();
+          const saved = await saveAppDataFileViaPicker(relativePath, filename);
+          if (!saved) return;
+        }
+      }
       await approveOverwrite();
     } catch (err) {
-      setBackupError(err instanceof Error ? err.message : "Backup failed");
+      logSyncError("Pairing overwrite backup failed", err);
+      setBackupError(userFacingSyncErrorMessage(err, "Backup failed"));
     } finally {
       setIsBackingUp(false);
     }

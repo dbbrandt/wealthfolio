@@ -305,6 +305,13 @@ mod tests {
         fn get_activity(&self, _: &str) -> Result<Activity> {
             unimplemented!()
         }
+        fn find_transfer_counterpart(
+            &self,
+            _group_id: &str,
+            _exclude_id: &str,
+        ) -> Result<Option<Activity>> {
+            Ok(None)
+        }
         fn get_activities(&self) -> Result<Vec<Activity>> {
             unimplemented!()
         }
@@ -432,7 +439,10 @@ mod tests {
         fn calculate_average_cost(&self, _: &str, _: &str) -> Result<Decimal> {
             unimplemented!()
         }
-        fn get_income_activities_data(&self, _account_id: Option<&str>) -> Result<Vec<IncomeData>> {
+        fn get_income_activities_data(
+            &self,
+            _account_ids: Option<&[String]>,
+        ) -> Result<Vec<IncomeData>> {
             unimplemented!()
         }
         fn get_first_activity_date_overall(&self) -> Result<DateTime<Utc>> {

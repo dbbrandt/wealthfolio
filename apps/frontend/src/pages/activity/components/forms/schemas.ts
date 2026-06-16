@@ -7,6 +7,8 @@ export const assetMetadataSchema = z
     name: z.string().nullable().optional(),
     kind: z.string().nullable().optional(),
     exchangeMic: z.string().nullable().optional(),
+    providerId: z.string().nullable().optional(),
+    providerSymbol: z.string().nullable().optional(),
   })
   .optional();
 
@@ -43,6 +45,10 @@ export const transferActivitySchema = baseActivitySchema.extend({
   direction: z.enum(["in", "out"]).default("out"),
   toAccountId: z.string().optional(),
   amount: z.coerce.number().positive().optional().nullable(),
+  sourceAmount: z.coerce.number().positive().optional().nullable(),
+  destinationAmount: z.coerce.number().positive().optional().nullable(),
+  sourceCurrency: z.string().optional(),
+  destinationCurrency: z.string().optional(),
   fee: z.coerce.number().min(0).default(0).optional(),
   assetId: z.string().optional().nullable(),
   quantity: z.coerce.number().positive().optional().nullable(),

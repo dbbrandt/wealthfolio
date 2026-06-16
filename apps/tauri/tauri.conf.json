@@ -28,11 +28,19 @@
       "bundleVersion": "20260301.1",
       "signingIdentity": "-",
       "minimumSystemVersion": "10.13"
+    },
+    "linux": {
+      "deb": {
+        "desktopTemplate": "linux/wealthfolio.desktop"
+      },
+      "rpm": {
+        "desktopTemplate": "linux/wealthfolio.desktop"
+      }
     }
   },
   "productName": "Wealthfolio LCB",
   "mainBinaryName": "Wealthfolio LCB",
-  "version": "3.4.0",
+  "version": "3.5.3",
   "identifier": "com.teymz.wealthfolio.lcb",
   "plugins": {
     "updater": {

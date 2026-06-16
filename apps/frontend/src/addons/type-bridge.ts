@@ -31,12 +31,12 @@ import type {
   IncomeSummary,
   MarketDataProviderInfo,
   NewContributionLimit,
-  PerformanceMetrics,
+  PerformanceResult,
   Quote,
   SnapshotInfo,
   SymbolSearchResult,
   Settings,
-  SimplePerformanceMetrics,
+  SimplePerformanceResult,
   UpdateAssetProfile,
 } from "@/lib/types";
 import type { HoldingInput } from "@/adapters";
@@ -79,7 +79,17 @@ export interface InternalHostAPI {
 
   // Market data
   searchTicker(query: string): Promise<SymbolSearchResult[]>;
-  fetchYahooDividends(symbol: string): Promise<{ amount: number; date: number }[]>;
+  fetchDividends(
+    symbol: string,
+    options?: {
+      exchangeMic?: string;
+      instrumentType?: string;
+      quoteCcy?: string;
+      providerId?: string;
+      startDate?: string;
+      endDate?: string;
+    },
+  ): Promise<{ amount: number; date: number }[]>;
   syncHistoryQuotes(): Promise<void>;
   getAssetProfile(assetId: string): Promise<Asset>;
   updateAssetProfile(payload: UpdateAssetProfile): Promise<Asset>;
@@ -106,22 +116,22 @@ export interface InternalHostAPI {
   calculatePerformanceHistory(
     itemType: "account" | "symbol",
     itemId: string,
-    startDate: string,
-    endDate: string,
-  ): Promise<PerformanceMetrics>;
+    startDate?: string,
+    endDate?: string,
+  ): Promise<PerformanceResult>;
   calculatePerformanceSummary(args: {
     itemType: "account" | "symbol";
     itemId: string;
     startDate?: string | null;
     endDate?: string | null;
-  }): Promise<PerformanceMetrics>;
-  calculateAccountsSimplePerformance(accountIds: string[]): Promise<SimplePerformanceMetrics[]>;
+  }): Promise<PerformanceResult>;
+  calculateAccountsSimplePerformance(accountIds: string[]): Promise<SimplePerformanceResult[]>;
   getHolding(accountId: string, assetId: string): Promise<Holding | null>;
 
   // Settings
   getSettings(): Promise<Settings>;
   updateSettings(settingsUpdate: Partial<Settings>): Promise<Settings>;
-  backupDatabase(): Promise<{ filename: string; data: Uint8Array }>;
+  backupDatabase(): Promise<{ filename: string }>;
 
   // Account management
   createAccount(account: unknown): Promise<Account>;
@@ -333,7 +343,7 @@ export function createSDKHostAPIBridge(
       syncHistory: internalAPI.syncHistoryQuotes,
       sync: internalAPI.syncMarketData,
       getProviders: internalAPI.getMarketDataProviders,
-      fetchDividends: internalAPI.fetchYahooDividends,
+      fetchDividends: internalAPI.fetchDividends,
     },
     assets: {
       getProfile: internalAPI.getAssetProfile,

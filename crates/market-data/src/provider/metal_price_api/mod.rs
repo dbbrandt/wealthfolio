@@ -161,6 +161,7 @@ impl MarketDataProvider for MetalPriceApiProvider {
             supports_historical: true,
             supports_search: false,
             supports_profile: false,
+            supports_dividends: false,
         }
     }
 
@@ -475,6 +476,7 @@ mod tests {
                 code: "XAU".into(),
                 quote: std::borrow::Cow::Borrowed("USD"),
             },
+            identifiers: Default::default(),
             overrides: None,
             currency_hint: None,
             preferred_provider: None,
@@ -514,6 +516,7 @@ mod tests {
                 code: "XAU".into(),
                 quote: std::borrow::Cow::Borrowed("CHF"),
             },
+            identifiers: Default::default(),
             overrides: None,
             currency_hint: None,
             preferred_provider: None,
@@ -547,6 +550,7 @@ mod tests {
                 code: "XAU".into(),
                 quote: std::borrow::Cow::Borrowed("USD"),
             },
+            identifiers: Default::default(),
             overrides: None,
             currency_hint: None,
             preferred_provider: None,
@@ -602,6 +606,7 @@ mod tests {
                 code: "FAKE".into(),
                 quote: std::borrow::Cow::Borrowed("USD"),
             },
+            identifiers: Default::default(),
             overrides: None,
             currency_hint: None,
             preferred_provider: None,

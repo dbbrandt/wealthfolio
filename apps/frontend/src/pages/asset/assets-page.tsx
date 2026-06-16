@@ -16,9 +16,8 @@ import { Icons } from "@wealthfolio/ui/components/ui/icons";
 import { RefreshQuotesConfirmDialog } from "./refresh-quotes-confirm-dialog";
 
 import { useHoldings } from "@/hooks/use-holdings";
-import { useIsMobileViewport } from "@/hooks/use-platform";
+import { useIsCompactTableViewport } from "@/hooks/use-platform";
 import { useSyncMarketDataMutation } from "@/hooks/use-sync-market-data";
-import { PORTFOLIO_ACCOUNT_ID } from "@/lib/constants";
 import { useSettingsContext } from "@/lib/settings-provider";
 import { SettingsHeader } from "../settings/settings-header";
 import { AssetEditSheet } from "./asset-edit-sheet";
@@ -35,8 +34,8 @@ export default function AssetsPage() {
   const { createAssetMutation, deleteAssetMutation } = useAssetManagement();
   const refetchQuotesMutation = useSyncMarketDataMutation(true);
   const updateQuotesMutation = useSyncMarketDataMutation(false);
-  const isMobileViewport = useIsMobileViewport();
-  const { holdings } = useHoldings(PORTFOLIO_ACCOUNT_ID);
+  const isCompactTableViewport = useIsCompactTableViewport();
+  const { holdings } = useHoldings({ type: "all" });
   const { settings } = useSettingsContext();
   const appTimezone = settings?.timezone?.trim() || undefined;
 
@@ -82,7 +81,7 @@ export default function AssetsPage() {
       </SettingsHeader>
       <Separator />
       <div className="w-full">
-        {isMobileViewport ? (
+        {isCompactTableViewport ? (
           <AssetsTableMobile
             assets={visibleAssets}
             latestQuotes={latestQuotes}

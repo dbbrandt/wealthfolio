@@ -11,23 +11,31 @@ import { Popover, PopoverContent, PopoverTrigger } from "@wealthfolio/ui/compone
 import { Account, TrackingMode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Icons, type Icon } from "@wealthfolio/ui";
-import { forwardRef, useState } from "react";
+import { Fragment, forwardRef, useState } from "react";
 
 import { Skeleton } from "@wealthfolio/ui/components/ui/skeleton";
 import { useAccounts } from "@/hooks/use-accounts";
+import { usePortfolios } from "@/hooks/use-portfolios";
 import { useSettings } from "@/hooks/use-settings";
-import { AccountType, PORTFOLIO_ACCOUNT_ID } from "@/lib/constants";
+import {
+  AccountPurpose,
+  AccountType,
+  accountSupportsPurpose,
+  PORTFOLIO_ACCOUNT_TYPE,
+  PORTFOLIO_SCOPE_ID,
+} from "@/lib/constants";
 import { AnimatePresence, motion } from "motion/react";
 
 // Custom type for UI purposes that extends the standard AccountType
-type UIAccountType = AccountType | typeof PORTFOLIO_ACCOUNT_ID;
+type UIAccountType = AccountType | typeof PORTFOLIO_ACCOUNT_TYPE;
 
 // Map account types to icons for visual distinction
 const accountTypeIcons: Record<string, Icon> = {
   SECURITIES: Icons.Briefcase,
   CASH: Icons.DollarSign,
+  CREDIT_CARD: Icons.CreditCard,
   CRYPTOCURRENCY: Icons.Bitcoin,
-  [PORTFOLIO_ACCOUNT_ID]: Icons.Wallet,
+  [PORTFOLIO_ACCOUNT_TYPE]: Icons.Wallet,
 };
 
 interface AccountSelectorProps {
@@ -43,8 +51,16 @@ interface AccountSelectorProps {
   icon?: Icon;
   /** Filter accounts by tracking mode(s). If provided, only accounts with matching tracking mode are shown. */
   trackingModes?: TrackingMode[];
-  /** Callback when an account group is selected. When provided, a GROUPS section is shown. */
-  onGroupSelect?: (group: { id: string; name: string }) => void;
+  /** Filter accounts by account type(s). If provided, only accounts with matching account type are shown. */
+  accountTypes?: readonly AccountType[];
+  /** Filter accounts by product purpose. Prefer this over accountTypes for app-owned account policy. */
+  accountPurpose?: AccountPurpose;
+  /**
+   * When provided, the dropdown also lists user-created portfolios (groupings of
+   * accounts from settings → Portfolios) under a "Portfolios" section, and the
+   * callback fires when one is picked instead of `setSelectedAccount`.
+   */
+  onPortfolioSelect?: (portfolio: { id: string; name: string }) => void;
 }
 
 // Extended Account type for UI that can have the PORTFOLIO type
@@ -55,9 +71,9 @@ interface UIAccount extends Omit<Account, "accountType"> {
 // Create a portfolio account for UI purposes
 function createPortfolioAccount(baseCurrency: string): UIAccount {
   return {
-    id: PORTFOLIO_ACCOUNT_ID,
+    id: PORTFOLIO_SCOPE_ID,
     name: "All Portfolio",
-    accountType: PORTFOLIO_ACCOUNT_ID as UIAccountType,
+    accountType: PORTFOLIO_ACCOUNT_TYPE as UIAccountType,
     balance: 0,
     currency: baseCurrency,
     isDefault: false,
@@ -122,7 +138,9 @@ export const AccountSelector = forwardRef<HTMLButtonElement, AccountSelectorProp
       iconOnly = false,
       icon: CustomIcon,
       trackingModes,
-      onGroupSelect,
+      accountTypes,
+      accountPurpose,
+      onPortfolioSelect,
     },
     ref,
   ) => {
@@ -132,20 +150,32 @@ export const AccountSelector = forwardRef<HTMLButtonElement, AccountSelectorProp
       includeArchived: false,
     });
     const { data: settings, isLoading: isLoadingSettings } = useSettings();
+    // Only load user-created portfolios when the caller knows how to handle them.
+    const { data: portfolios = [] } = usePortfolios();
+    const showPortfolios = !!onPortfolioSelect && portfolios.length > 0;
 
     const isLoading = isLoadingAccounts || isLoadingSettings;
 
-    // Filter by tracking mode if specified, then add portfolio account if requested
-    const filteredAccounts = trackingModes
-      ? accounts.filter((acc) => trackingModes.includes(acc.trackingMode))
-      : accounts;
+    // Filter by tracking/account type if specified, then add portfolio account if requested
+    const filteredAccounts = accounts.filter((acc) => {
+      if (trackingModes && !trackingModes.includes(acc.trackingMode)) {
+        return false;
+      }
+      if (accountTypes && !accountTypes.includes(acc.accountType)) {
+        return false;
+      }
+      if (accountPurpose && !accountSupportsPurpose(acc, accountPurpose)) {
+        return false;
+      }
+      return true;
+    });
     const displayAccounts = [...filteredAccounts];
 
     if (includePortfolio) {
       const baseCurrency = settings?.baseCurrency ?? "USD"; // Default to USD if settings not loaded
       const portfolioAccount = createPortfolioAccount(baseCurrency);
       // Check if portfolio account already exists to avoid duplication
-      const portfolioExists = accounts.some((account) => account.id === PORTFOLIO_ACCOUNT_ID);
+      const portfolioExists = accounts.some((account) => account.id === PORTFOLIO_SCOPE_ID);
 
       if (!portfolioExists) {
         displayAccounts.push(portfolioAccount as Account);
@@ -163,15 +193,10 @@ export const AccountSelector = forwardRef<HTMLButtonElement, AccountSelectorProp
 
     // Sort groups to ensure PORTFOLIO appears first if it exists
     const sortedGroups = Object.entries(accountsByType).sort(([typeA], [typeB]) => {
-      if (typeA === PORTFOLIO_ACCOUNT_ID) return -1;
-      if (typeB === PORTFOLIO_ACCOUNT_ID) return 1;
+      if (typeA === PORTFOLIO_ACCOUNT_TYPE) return -1;
+      if (typeB === PORTFOLIO_ACCOUNT_TYPE) return 1;
       return 0;
     });
-
-    // Extract unique account groups for the GROUPS section
-    const uniqueAccountGroups = onGroupSelect
-      ? [...new Set(filteredAccounts.filter((a) => a.group).map((a) => a.group!))].sort()
-      : [];
 
     // Render skeleton for loading state
     const renderSkeleton = () => {
@@ -431,74 +456,79 @@ export const AccountSelector = forwardRef<HTMLButtonElement, AccountSelectorProp
               ) : (
                 <>
                   <CommandEmpty>No accounts found.</CommandEmpty>
-                  {sortedGroups.flatMap(([type, typeAccounts]) => {
-                    const groupSection = (
-                      <CommandGroup key={type} heading={type}>
-                        {typeAccounts.map((account) => {
-                          const IconComponent =
-                            accountTypeIcons[account.accountType] ?? Icons.CreditCard;
-                          return (
-                            <CommandItem
-                              key={account.id}
-                              value={account.id}
-                              keywords={[account.name, account.currency, account.accountType]}
-                              onSelect={() => {
-                                setSelectedAccount(account);
-                                setOpen(false);
-                              }}
-                              className="flex items-center py-1.5"
-                            >
-                              <div className="flex flex-1 items-center">
-                                <IconComponent className="mr-2 h-4 w-4" />
-                                <span>
-                                  {account.name} ({account.currency})
-                                </span>
-                              </div>
-                              <Icons.Check
-                                className={cn(
-                                  "ml-auto h-4 w-4",
-                                  selectedAccount?.id === account.id
-                                    ? "opacity-100"
-                                    : "opacity-0",
-                                )}
-                              />
-                            </CommandItem>
-                          );
-                        })}
-                      </CommandGroup>
+                  {(() => {
+                    // Insert the Portfolios group after the synthetic "PORTFOLIO" entry
+                    // so user-created portfolios sit next to "All Portfolio" rather than
+                    // between two SECURITIES groups. If no synthetic group exists, render
+                    // Portfolios at the top.
+                    const hasPortfolioGroup = sortedGroups.some(
+                      ([t]) => t === PORTFOLIO_ACCOUNT_TYPE,
                     );
-
-                    // Insert GROUPS section right after TOTAL
-                    if (
-                      type === PORTFOLIO_ACCOUNT_ID &&
-                      uniqueAccountGroups.length > 0
-                    ) {
-                      return [
-                        groupSection,
-                        <CommandGroup key="GROUPS" heading="GROUPS">
-                          {uniqueAccountGroups.map((groupName) => (
-                            <CommandItem
-                              key={`group:${groupName}`}
-                              value={`group:${groupName}`}
-                              keywords={[groupName]}
-                              onSelect={() => {
-                                onGroupSelect?.({ id: groupName, name: groupName });
-                                setOpen(false);
-                              }}
-                              className="flex items-center py-1.5"
-                            >
-                              <div className="flex flex-1 items-center">
-                                <Icons.FolderOpen className="mr-2 h-4 w-4" />
-                                <span>{groupName}</span>
-                              </div>
-                            </CommandItem>
-                          ))}
-                        </CommandGroup>,
-                      ];
-                    }
-
-                    return [groupSection];
-                  })}
+                    const portfoliosGroup = showPortfolios ? (
+                      <CommandGroup key="__portfolios__" heading="Portfolios">
+                        {portfolios.map((p) => (
+                          <CommandItem
+                            key={p.id}
+                            value={p.id}
+                            keywords={[p.name]}
+                            onSelect={() => {
+                              onPortfolioSelect?.({ id: p.id, name: p.name });
+                              setOpen(false);
+                            }}
+                            className="flex items-center py-1.5"
+                          >
+                            <div className="flex flex-1 items-center">
+                              <Icons.Folder className="mr-2 h-4 w-4" />
+                              <span>{p.name}</span>
+                            </div>
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    ) : null;
+                    return (
+                      <>
+                        {showPortfolios && !hasPortfolioGroup && portfoliosGroup}
+                        {sortedGroups.map(([type, typeAccounts]) => (
+                          <Fragment key={type}>
+                            <CommandGroup heading={type}>
+                              {typeAccounts.map((account) => {
+                                const IconComponent =
+                                  accountTypeIcons[account.accountType] ?? Icons.CreditCard;
+                                return (
+                                  <CommandItem
+                                    key={account.id}
+                                    value={account.id}
+                                    keywords={[account.name, account.currency, account.accountType]}
+                                    onSelect={() => {
+                                      setSelectedAccount(account);
+                                      setOpen(false);
+                                    }}
+                                    className="flex items-center py-1.5"
+                                  >
+                                    <div className="flex flex-1 items-center">
+                                      <IconComponent className="mr-2 h-4 w-4" />
+                                      <span>
+                                        {account.name} ({account.currency})
+                                      </span>
+                                    </div>
+                                    <Icons.Check
+                                      className={cn(
+                                        "ml-auto h-4 w-4",
+                                        selectedAccount?.id === account.id
+                                          ? "opacity-100"
+                                          : "opacity-0",
+                                      )}
+                                    />
+                                  </CommandItem>
+                                );
+                              })}
+                            </CommandGroup>
+                            {type === PORTFOLIO_ACCOUNT_TYPE && portfoliosGroup}
+                          </Fragment>
+                        ))}
+                      </>
+                    );
+                  })()}
                 </>
               )}
             </CommandList>

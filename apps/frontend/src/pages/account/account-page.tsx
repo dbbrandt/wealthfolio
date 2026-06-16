@@ -14,6 +14,7 @@ import {
   PageContent,
   PageHeader,
   PrivacyAmount,
+  Skeleton,
   Tooltip,
   TooltipContent,
   TooltipProvider,
@@ -25,9 +26,18 @@ import { ActionPalette, type ActionPaletteGroup } from "@/components/action-pale
 import { PrivacyToggle } from "@/components/privacy-toggle";
 import { useAccounts } from "@/hooks/use-accounts";
 import { useRebuildPortfolioMutation } from "@/hooks/use-calculate-portfolio";
+import { useCurrentValuation } from "@/hooks/use-current-account-valuations";
 import { useValuationHistory } from "@/hooks/use-valuation-history";
 import { canAddHoldings } from "@/lib/activity-restrictions";
-import { AccountType, HoldingType } from "@/lib/constants";
+import {
+  AccountPurpose,
+  AccountType,
+  accountSupportsPurpose,
+  HoldingType,
+  isLiabilityAccountType,
+} from "@/lib/constants";
+import { performanceHeadlineReturn, performancePeriodPnl } from "@/lib/performance";
+import { getPerformanceDateRangeForRequest } from "@/lib/performance-date-range";
 import { QueryKeys } from "@/lib/query-keys";
 import { useSettingsContext } from "@/lib/settings-provider";
 import {
@@ -40,7 +50,7 @@ import {
   TrackedItem,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { ActivityTableMobile } from "@/pages/activity/components/activity-table/activity-table-mobile";
+import { ActivityDateSheet } from "@/pages/activity/components/activity-date-sheet";
 import { BulkHoldingsModal } from "@/pages/activity/components/forms/bulk-holdings-modal";
 import { PortfolioUpdateTrigger } from "@/pages/dashboard/portfolio-update-trigger";
 import { HoldingsEditMode } from "@/pages/holdings/components/holdings-edit-mode";
@@ -66,11 +76,17 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@wealthfolio/ui/components/ui/sheet";
-import { format, parseISO, subMonths } from "date-fns";
+import { format, subMonths } from "date-fns";
 import { useNavigate, useParams } from "react-router-dom";
 import { AccountContributionLimit } from "./account-contribution-limit";
 import AccountHoldings from "./account-holdings";
 import AccountMetrics from "./account-metrics";
+import {
+  buildCashAuditReviewTarget,
+  getCurrentNegativeCashRun,
+  offsetDateKey,
+  toDateKey,
+} from "./cash-audit";
 import AccountSnapshotHistory from "./account-snapshot-history";
 
 interface HistoryChartData {
@@ -86,6 +102,7 @@ type AccountDetailTab = "holdings" | "snapshots";
 const accountTypeIcons: Record<AccountType, Icon> = {
   SECURITIES: Icons.Briefcase,
   CASH: Icons.DollarSign,
+  CREDIT_CARD: Icons.CreditCard,
   CRYPTOCURRENCY: Icons.Bitcoin,
 };
 
@@ -95,21 +112,42 @@ const getInitialDateRange = (): DateRange => ({
   to: new Date(),
 });
 
-// Format date for display
-const formatDate = (dateStr: string): string => {
-  try {
-    return format(parseISO(dateStr), "MMMM d, yyyy");
-  } catch {
-    return dateStr;
-  }
-};
-
 // Define the initial interval code (consistent with other pages)
 const INITIAL_INTERVAL_CODE: TimePeriod = "3M";
+const CASH_AUDIT_ACTIVITY_PAGE_SIZE = 500;
+
+async function getCashAuditActivities(
+  accountId: string,
+  dateFrom: string | undefined,
+  dateTo: string,
+): Promise<ActivityDetails[]> {
+  const activities: ActivityDetails[] = [];
+  let page = 0;
+  let totalRowCount = Number.POSITIVE_INFINITY;
+
+  while (activities.length < totalRowCount) {
+    const response = await searchActivities(
+      page,
+      CASH_AUDIT_ACTIVITY_PAGE_SIZE,
+      { accountIds: [accountId], dateFrom, dateTo },
+      "",
+      { id: "date", desc: false },
+    );
+
+    activities.push(...response.data);
+    totalRowCount = response.meta.totalRowCount;
+
+    if (response.data.length < CASH_AUDIT_ACTIVITY_PAGE_SIZE) break;
+    page += 1;
+  }
+
+  return activities;
+}
 
 const AccountPage = () => {
   const { settings } = useSettingsContext();
   const baseCurrency = settings?.baseCurrency ?? "USD";
+  const appTimezone = settings?.timezone?.trim() || undefined;
   const { id = "" } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [dateRange, setDateRange] = useState<DateRange | undefined>(getInitialDateRange());
@@ -129,6 +167,12 @@ const AccountPage = () => {
   const rebuildPortfolioMutation = useRebuildPortfolioMutation();
   const { accounts, isLoading: isAccountsLoading } = useAccounts();
   const account = useMemo(() => accounts?.find((acc) => acc.id === id), [accounts, id]);
+  const isLiabilityAccount = isLiabilityAccountType(account?.accountType);
+  const supportsPerformance = accountSupportsPurpose(account, AccountPurpose.PERFORMANCE);
+  const supportsContributionLimits = accountSupportsPurpose(
+    account,
+    AccountPurpose.CONTRIBUTION_LIMITS,
+  );
 
   // Check if this account is in HOLDINGS tracking mode
   const isHoldingsMode = useMemo(() => {
@@ -144,7 +188,7 @@ const AccountPage = () => {
   // Query holdings to check if account has any assets
   const { data: holdings, isLoading: isHoldingsLoading } = useQuery<Holding[], Error>({
     queryKey: [QueryKeys.HOLDINGS, id],
-    queryFn: () => getHoldings(id),
+    queryFn: () => getHoldings({ type: "account", accountId: id }),
   });
 
   // Check if account has any holdings (including cash)
@@ -251,11 +295,13 @@ const AccountPage = () => {
   }, [accounts]);
 
   const accountTrackedItem: TrackedItem | undefined = useMemo(() => {
-    if (account) {
+    if (account && supportsPerformance) {
       return { id: account.id, type: "account", name: account.name };
     }
     return undefined;
-  }, [account]);
+  }, [account, supportsPerformance]);
+
+  const performanceDateRange = getPerformanceDateRangeForRequest(dateRange, selectedIntervalCode);
 
   // Pass tracking mode to the performance hook for SOTA calculations
   const {
@@ -265,7 +311,7 @@ const AccountPage = () => {
     errorMessages: performanceErrorMessages,
   } = useCalculatePerformanceHistory({
     selectedItems: accountTrackedItem ? [accountTrackedItem] : [],
-    dateRange: dateRange,
+    dateRange: performanceDateRange,
     trackingMode: isHoldingsMode ? "HOLDINGS" : "TRANSACTIONS",
   });
 
@@ -273,14 +319,125 @@ const AccountPage = () => {
 
   const { valuationHistory, isLoading: isValuationHistoryLoading } = useValuationHistory(
     dateRange,
-    id,
+    { type: "account", accountId: id },
+  );
+  const {
+    currentValuation: liveCurrentValuation,
+    isLoading: isCurrentValuationLoading,
+    error: currentValuationError,
+  } = useCurrentValuation(
+    { type: "account", accountId: id },
+    { includeAccounts: true, enabled: Boolean(id) },
   );
 
   const currentValuation = valuationHistory?.[valuationHistory.length - 1];
+  const currentAccountValuation = liveCurrentValuation?.accounts[0];
+  const currentCashBalanceIsNegative = (currentValuation?.cashBalance ?? 0) < 0;
+  const shouldLoadCashAuditValuationHistory =
+    currentCashBalanceIsNegative && !isHoldingsMode && !isLiabilityAccount;
 
-  // Use period gain and return from backend (SOTA calculations for HOLDINGS mode)
-  const frontendGainLossAmount = accountPerformance?.periodGain ?? 0;
-  const frontendSimpleReturn = accountPerformance?.periodReturn ?? 0;
+  const {
+    valuationHistory: cashAuditValuationHistory,
+    isLoading: isCashAuditValuationHistoryLoading,
+  } = useValuationHistory(
+    undefined,
+    { type: "account", accountId: id },
+    {
+      enabled: shouldLoadCashAuditValuationHistory,
+    },
+  );
+
+  const selectedActivityDateValuation = useMemo(() => {
+    if (!selectedActivityDate) return null;
+    const selectedDateKey = toDateKey(selectedActivityDate, appTimezone);
+    const histories = [valuationHistory, cashAuditValuationHistory];
+    for (const history of histories) {
+      const valuation = history?.find(
+        (item) => toDateKey(item.valuationDate, appTimezone) === selectedDateKey,
+      );
+      if (valuation) return valuation;
+    }
+    return null;
+  }, [appTimezone, cashAuditValuationHistory, selectedActivityDate, valuationHistory]);
+
+  const currentNegativeCashRun = useMemo(() => {
+    if (isHoldingsMode || isLiabilityAccount || !cashAuditValuationHistory) return null;
+    return getCurrentNegativeCashRun(cashAuditValuationHistory, appTimezone);
+  }, [appTimezone, cashAuditValuationHistory, isHoldingsMode, isLiabilityAccount]);
+
+  const firstVisibleNegativeCashValuation = useMemo(() => {
+    if (isHoldingsMode || isLiabilityAccount || !valuationHistory) return null;
+    return (
+      valuationHistory.find((valuation) => valuation.cashBalance < 0) ??
+      currentNegativeCashRun?.firstNegativeValuation ??
+      null
+    );
+  }, [currentNegativeCashRun, isHoldingsMode, isLiabilityAccount, valuationHistory]);
+
+  const cashAuditRunStartDate = toDateKey(
+    currentNegativeCashRun?.firstNegativeValuation.valuationDate,
+    appTimezone,
+  );
+  const cashAuditPreviousDate = toDateKey(
+    currentNegativeCashRun?.previousNonNegativeValuation?.valuationDate,
+    appTimezone,
+  );
+  const cashAuditDateFrom = offsetDateKey(cashAuditPreviousDate, -1);
+  const cashAuditDateTo = offsetDateKey(cashAuditRunStartDate, 1);
+
+  const { data: cashAuditActivities = [], isLoading: isCashAuditActivitiesLoading } = useQuery<
+    ActivityDetails[],
+    Error
+  >({
+    queryKey: ["activities", "cashAudit", id, cashAuditDateFrom, cashAuditDateTo],
+    queryFn: async () => {
+      if (!cashAuditDateTo) return [];
+      return getCashAuditActivities(id, cashAuditDateFrom, cashAuditDateTo);
+    },
+    enabled:
+      !!account && currentCashBalanceIsNegative && !!currentNegativeCashRun && !!cashAuditDateTo,
+  });
+
+  const negativeCashAuditTarget = useMemo(
+    () => buildCashAuditReviewTarget(currentNegativeCashRun, cashAuditActivities, appTimezone),
+    [appTimezone, cashAuditActivities, currentNegativeCashRun],
+  );
+
+  const selectedCashAuditTarget =
+    negativeCashAuditTarget &&
+    toDateKey(selectedActivityDate, appTimezone) === negativeCashAuditTarget.activityDate
+      ? negativeCashAuditTarget
+      : null;
+  const selectedCashAuditActivities = useMemo(() => {
+    if (!selectedCashAuditTarget) return undefined;
+    return cashAuditActivities.filter(
+      (activity) => toDateKey(activity.date, appTimezone) === selectedCashAuditTarget.activityDate,
+    );
+  }, [appTimezone, cashAuditActivities, selectedCashAuditTarget]);
+
+  const frontendGainLossAmount = performancePeriodPnl(accountPerformance);
+  const frontendSimpleReturn = performanceHeadlineReturn(accountPerformance);
+  const displayedValueCurrency =
+    account?.currency ??
+    currentAccountValuation?.accountCurrency ??
+    currentValuation?.accountCurrency ??
+    baseCurrency;
+  const displayedTotalValue =
+    currentAccountValuation?.totalValue ??
+    (!isCurrentValuationLoading && !currentValuationError ? currentValuation?.totalValue : 0) ??
+    0;
+  const displayedSourceDataAsOf =
+    currentAccountValuation?.sourceDataAsOf ??
+    (!currentAccountValuation && !isCurrentValuationLoading && !currentValuationError
+      ? currentValuation?.calculatedAt
+      : undefined);
+  const displayedValuationNotices =
+    currentAccountValuation?.warnings ?? liveCurrentValuation?.summary.warnings;
+  const isCurrentValuationUnavailable =
+    !isCurrentValuationLoading && !currentAccountValuation && Boolean(currentValuationError);
+  const performanceCurrency = accountPerformance?.scope.currency ?? baseCurrency;
+  const showPerformanceCurrency =
+    performanceCurrency.toUpperCase() !== displayedValueCurrency.toUpperCase();
 
   const chartData: HistoryChartData[] = useMemo(() => {
     if (!valuationHistory) return [];
@@ -305,19 +462,17 @@ const AccountPage = () => {
   };
 
   const percentageToDisplay = useMemo(() => {
-    // For HOLDINGS mode, always use simple return since TWR/MWR are not meaningful
-    // (they require transaction history to track cash flows)
+    // Holdings mode has no transaction cash-flow history, so show value return.
     if (isHoldingsMode) {
       return frontendSimpleReturn;
     }
     if (selectedIntervalCode === "ALL") {
       return frontendSimpleReturn;
     }
-    // For other intervals, if accountPerformance is available, use cumulativeMwr
     if (accountPerformance) {
-      return accountPerformance.cumulativeMwr ?? 0;
+      return performanceHeadlineReturn(accountPerformance);
     }
-    return 0; // Default if no specific logic matches or data is unavailable
+    return null;
   }, [accountPerformance, selectedIntervalCode, frontendSimpleReturn, isHoldingsMode]);
 
   const handleAccountSwitch = (selectedAccount: Account) => {
@@ -368,14 +523,18 @@ const AccountPage = () => {
                   ] satisfies ActionPaletteGroup[])
                 : ([
                     {
-                      title: "Transactions",
+                      title: isLiabilityAccount ? "Activity" : "Transactions",
                       items: [
-                        {
-                          icon: Icons.Plus,
-                          label: "Record Transaction",
-                          onClick: () => navigate(`/activities/manage?account=${id}`),
-                        },
-                        ...(isHoldingsMode
+                        ...(!isLiabilityAccount
+                          ? [
+                              {
+                                icon: Icons.Plus,
+                                label: "Record Transaction",
+                                onClick: () => navigate(`/activities/manage?account=${id}`),
+                              },
+                            ]
+                          : []),
+                        ...(isHoldingsMode || isLiabilityAccount
                           ? []
                           : [
                               {
@@ -552,28 +711,49 @@ const AccountPage = () => {
               <Card className="col-span-1 md:col-span-2">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0">
                   <CardTitle className="text-md">
-                    <PortfolioUpdateTrigger lastCalculatedAt={currentValuation?.calculatedAt}>
+                    <PortfolioUpdateTrigger
+                      lastCalculatedAt={displayedSourceDataAsOf}
+                      notices={displayedValuationNotices}
+                    >
                       <div className="flex items-start gap-2">
                         <div>
                           <p className="pt-3 text-xl font-bold">
-                            <PrivacyAmount
-                              value={currentValuation?.totalValue ?? 0}
-                              currency={account?.currency ?? baseCurrency}
-                            />
+                            {isCurrentValuationLoading ? (
+                              <Skeleton className="h-8 w-36" />
+                            ) : isCurrentValuationUnavailable ? (
+                              <span className="text-muted-foreground">N/A</span>
+                            ) : (
+                              <PrivacyAmount
+                                value={displayedTotalValue}
+                                currency={displayedValueCurrency}
+                              />
+                            )}
                           </p>
                           {!hasPerformanceError && (
                             <div className="flex items-center gap-2 text-sm">
-                              <GainAmount
-                                className="text-sm font-light"
-                                value={frontendGainLossAmount}
-                                currency={account?.currency ?? baseCurrency}
-                                displayCurrency={false}
-                              />
-                              <GainPercent
-                                value={percentageToDisplay}
-                                variant="badge"
-                                className="text-xs"
-                              />
+                              {frontendGainLossAmount == null ? (
+                                <span className="text-muted-foreground text-sm font-light">
+                                  N/A
+                                </span>
+                              ) : (
+                                <GainAmount
+                                  className="text-sm font-light"
+                                  value={frontendGainLossAmount}
+                                  currency={performanceCurrency}
+                                  displayCurrency={showPerformanceCurrency}
+                                />
+                              )}
+                              {percentageToDisplay == null ? (
+                                <span className="text-muted-foreground bg-foreground/10 rounded-md px-2 py-px text-xs font-light">
+                                  N/A
+                                </span>
+                              ) : (
+                                <GainPercent
+                                  value={percentageToDisplay}
+                                  variant="badge"
+                                  className="text-xs"
+                                />
+                              )}
                             </div>
                           )}
                         </div>
@@ -645,10 +825,26 @@ const AccountPage = () => {
                   isLoading={isLoading}
                   isPerformanceLoading={isPerformanceHistoryLoading}
                   performanceError={hasPerformanceError ? performanceErrorMessages[0] : undefined}
-                  hideBalanceEdit={isHoldingsMode}
+                  hideBalanceEdit={isHoldingsMode || isLiabilityAccount}
                   isHoldingsMode={isHoldingsMode}
+                  balanceLabel={isLiabilityAccount ? "Balance" : "Cash Balance"}
+                  balanceWarning={
+                    firstVisibleNegativeCashValuation && currentCashBalanceIsNegative
+                      ? {
+                          label: "Review cash impact",
+                          disabled: !negativeCashAuditTarget,
+                          isLoading:
+                            isCashAuditValuationHistoryLoading || isCashAuditActivitiesLoading,
+                          onClick: () => {
+                            if (!negativeCashAuditTarget) return;
+                            setSelectedActivityDate(negativeCashAuditTarget.activityDate);
+                            setIsActivitySheetOpen(true);
+                          },
+                        }
+                      : undefined
+                  }
                 />
-                <AccountContributionLimit accountId={id} />
+                {supportsContributionLimits && <AccountContributionLimit accountId={id} />}
               </div>
             </div>
 
@@ -717,34 +913,23 @@ const AccountPage = () => {
         </Sheet>
       )}
 
-      {/* Activities Sheet for Transactions mode marker click */}
-      <Sheet open={isActivitySheetOpen} onOpenChange={setIsActivitySheetOpen}>
-        <SheetContent side="right" className="flex h-full w-full flex-col p-0 sm:max-w-md">
-          <SheetHeader className="border-b px-6 py-4">
-            <SheetTitle>
-              Activities on {selectedActivityDate ? formatDate(selectedActivityDate) : ""}
-            </SheetTitle>
-            <SheetDescription>
-              {dateActivities?.length ?? 0} activities recorded on this date
-            </SheetDescription>
-          </SheetHeader>
-          <div className="flex-1 overflow-auto px-4 py-4">
-            {isDateActivitiesLoading ? (
-              <div className="flex items-center justify-center py-8">
-                <Icons.Spinner className="size-6 animate-spin" />
-              </div>
-            ) : (
-              <ActivityTableMobile
-                activities={dateActivities ?? []}
-                isCompactView={true}
-                handleEdit={() => {}}
-                handleDelete={() => {}}
-                onDuplicate={async () => {}}
-              />
-            )}
-          </div>
-        </SheetContent>
-      </Sheet>
+      <ActivityDateSheet
+        open={isActivitySheetOpen}
+        onOpenChange={setIsActivitySheetOpen}
+        date={selectedActivityDate}
+        activities={selectedCashAuditActivities ?? dateActivities ?? []}
+        isLoading={selectedCashAuditTarget ? isCashAuditActivitiesLoading : isDateActivitiesLoading}
+        endingCashBalance={
+          selectedCashAuditTarget?.endingCashBalance ?? selectedActivityDateValuation?.cashBalance
+        }
+        cashCurrency={
+          selectedCashAuditTarget?.cashCurrency ??
+          selectedActivityDateValuation?.accountCurrency ??
+          account?.currency ??
+          currentValuation?.accountCurrency
+        }
+        cashAuditTarget={selectedCashAuditTarget ?? undefined}
+      />
 
       {/* Bulk Holdings Modal for Transfer Holdings */}
       <BulkHoldingsModal

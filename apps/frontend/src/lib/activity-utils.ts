@@ -3,6 +3,8 @@ import {
   ActivityType,
   DECIMAL_PRECISION,
   INCOME_ACTIVITY_TYPES,
+  InstrumentType,
+  METADATA_CONTRACT_MULTIPLIER,
   SYMBOL_REQUIRED_TYPES,
 } from "./constants";
 import { ActivityDetails } from "./types";
@@ -269,6 +271,23 @@ export const getUnitPrice = (activity: ActivityDetails): number => {
 };
 
 /**
+ * Returns the contract multiplier for an activity's instrument. Options trade in
+ * contracts that represent N underlying units (typically 100), so their cash
+ * value is quantity × unitPrice × multiplier. A non-default multiplier is stored
+ * on the activity metadata; otherwise options default to 100 and everything else
+ * to 1.
+ * @param activity The activity
+ * @returns The contract multiplier
+ */
+export const getContractMultiplier = (activity: ActivityDetails): number => {
+  const stored = Number(activity.metadata?.[METADATA_CONTRACT_MULTIPLIER]);
+  if (Number.isFinite(stored) && stored > 0) {
+    return stored;
+  }
+  return activity.instrumentType === InstrumentType.OPTION ? 100 : 1;
+};
+
+/**
  * Calculates the total value of an activity based on its type and data
  * @param activity The activity to calculate the value for
  * @returns The calculated value
@@ -320,7 +339,9 @@ export const calculateActivityValue = (activity: ActivityDetails): number => {
   const quantity = getQuantity(activity);
   const unitPrice = getUnitPrice(activity);
   const fee = getFee(activity);
-  let activityAmount = roundCurrency(Number(quantity) * Number(unitPrice));
+  let activityAmount = roundCurrency(
+    Number(quantity) * Number(unitPrice) * getContractMultiplier(activity),
+  );
 
   // Securities transfers imported without a unit price (legacy / some broker
   // exports) carry their monetary value on `amount`. Fall back to it so those
@@ -342,6 +363,36 @@ export const calculateActivityValue = (activity: ActivityDetails): number => {
 
   // Default case - just return the activity amount
   return roundCurrency(Number(activityAmount));
+};
+
+export const calculateActivityCashImpact = (activity: ActivityDetails): number => {
+  const { activityType, assetSymbol, assetId, subtype } = activity;
+  const activityValue = calculateActivityValue(activity);
+
+  if (!Number.isFinite(activityValue) || activityValue === 0) {
+    return 0;
+  }
+
+  switch (activityType) {
+    case ActivityType.BUY:
+    case ActivityType.WITHDRAWAL:
+    case ActivityType.FEE:
+    case ActivityType.TAX:
+      return roundCurrency(-activityValue);
+    case ActivityType.SELL:
+    case ActivityType.DEPOSIT:
+    case ActivityType.CREDIT:
+      return roundCurrency(activityValue);
+    case ActivityType.TRANSFER_IN:
+      return isCashTransfer(activityType, assetSymbol, assetId) ? roundCurrency(activityValue) : 0;
+    case ActivityType.TRANSFER_OUT:
+      return isCashTransfer(activityType, assetSymbol, assetId) ? roundCurrency(-activityValue) : 0;
+    case ActivityType.DIVIDEND:
+    case ActivityType.INTEREST:
+      return isAssetBackedIncomeSubtype(activityType, subtype) ? 0 : roundCurrency(activityValue);
+    default:
+      return 0;
+  }
 };
 
 /**

@@ -26,6 +26,7 @@ export type {
   BackendSyncReconcileReadyResult,
   BackendSyncSnapshotUploadResult,
   BackendSyncStateResult,
+  DataExportResult,
   EphemeralKeyPair,
   EventCallback,
   ExtractedAddon,
@@ -69,6 +70,14 @@ export const RUN_ENV: RunEnv = RunEnvs.WEB;
 // Shared domain modules (identical logic for both platforms)
 // ============================================================================
 
+// Portfolio Commands
+export {
+  createPortfolio,
+  deletePortfolio,
+  getPortfolios,
+  updatePortfolioEntry,
+} from "../shared/portfolios";
+
 // Account Commands
 export { createAccount, deleteAccount, getAccounts, updateAccount } from "../shared/accounts";
 
@@ -80,6 +89,9 @@ export {
   deleteImportTemplate,
   deleteActivity,
   getImportTemplate,
+  getBrokerSyncProfile,
+  findTransferMatchCandidates,
+  getTransferPairForActivity,
   getAccountImportMapping,
   linkAccountTemplate,
   linkTransferActivities,
@@ -89,7 +101,9 @@ export {
   listImportTemplates,
   previewImportAssets,
   saveAccountImportMapping,
+  saveBrokerSyncProfileRules,
   saveImportTemplate,
+  saveInternalTransferPair,
   saveActivities,
   searchActivities,
   updateActivity,
@@ -133,6 +147,7 @@ export {
   importTaxonomyJson,
   migrateLegacyClassifications,
   moveCategory,
+  replaceAssetTaxonomyAssignments,
   removeAssetTaxonomyAssignment,
   updateCategory,
   updateTaxonomy,
@@ -143,19 +158,23 @@ export {
   calculateAccountsSimplePerformance,
   calculatePerformanceHistory,
   calculatePerformanceSummary,
+  calculatePerformanceSummaries,
   checkHoldingsImport,
   deleteSnapshot,
   getAssetHoldings,
+  getAssetLots,
   getHistoricalValuations,
   getHolding,
   getHoldings,
   getHoldingsByAllocation,
   getIncomeSummary,
+  getCurrentValuation,
   getLatestValuations,
   getPortfolioAllocations,
   getSnapshotByDate,
   getSnapshots,
   importHoldingsCsv,
+  performanceSummaryScopeKey,
   rebuildPortfolio,
   recalculatePortfolio,
   saveManualHoldings,
@@ -168,7 +187,7 @@ export {
   createAsset,
   deleteAsset,
   deleteQuote,
-  fetchYahooDividends,
+  fetchDividends,
   getAssetProfile,
   getAssets,
   getExchanges,
@@ -310,6 +329,24 @@ export {
   updateHealthConfig,
 } from "../shared/health";
 
+// Allocation Target Commands
+export {
+  archiveAllocationTarget,
+  calculateRebalancePlan,
+  createAllocationTarget,
+  deleteAllocationTarget,
+  getAllocationTargetDrift,
+  getAllocationTarget,
+  listAllocationTargetWeights,
+  listAllocationTargets,
+  saveAllocationTargetWeights,
+  saveAllocationTargetWithWeights,
+  updateAllocationTarget,
+} from "../shared/allocation-targets";
+
+// Data Export Commands
+export { exportDataFile } from "./exports";
+
 // ============================================================================
 // Platform-specific modules (different implementations for web vs desktop)
 // ============================================================================
@@ -324,6 +361,7 @@ export {
   listenBrokerSyncStart,
   listenDatabaseRestored,
   listenDeepLink,
+  getCurrentDeepLinks,
   listenFileDrop,
   listenFileDropCancelled,
   listenFileDropHover,
@@ -342,22 +380,28 @@ export {
   openDatabaseFileDialog,
   openFileSaveDialog,
   openFolderDialog,
+  saveAppDataFileViaPicker,
   openUrlInBrowser,
 } from "./files";
 
 // Settings Commands (web-specific API for backups and updates)
 export {
   backupDatabase,
+  backupDatabaseToPendingExport,
   backupDatabaseToPath,
   checkForUpdates,
+  deleteDatabaseBackup,
   getAppInfo,
+  getDatabaseBackupDownloadUrl,
   getPlatform,
   getSettings,
   installUpdate,
   isAutoUpdateCheckEnabled,
+  listDatabaseBackups,
   restoreDatabase,
   updateSettings,
 } from "./settings";
+export type { DatabaseBackup } from "./settings";
 
 // Addon Commands (web-specific implementations)
 export {

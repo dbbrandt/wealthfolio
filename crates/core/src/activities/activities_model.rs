@@ -241,6 +241,10 @@ pub struct AssetResolutionInput {
     pub quote_ccy: Option<String>,
     /// Optional instrument type from symbol search/provider (e.g., "EQUITY", "CRYPTO").
     pub instrument_type: Option<String>,
+    /// Market data provider that resolved this symbol, if selected.
+    pub provider_id: Option<String>,
+    /// Provider-native symbol/code selected by search/import.
+    pub provider_symbol: Option<String>,
 }
 
 /// Input model for creating a new activity
@@ -614,6 +618,70 @@ pub struct ActivityBulkMutationResult {
     pub errors: Vec<ActivityBulkMutationError>,
 }
 
+/// Pair-aware request for creating or updating an internal cash transfer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InternalTransferPairRequest {
+    #[serde(default)]
+    pub transfer_out_id: Option<String>,
+    #[serde(default)]
+    pub transfer_in_id: Option<String>,
+    #[serde(default)]
+    pub source_group_id: Option<String>,
+    pub from_account_id: String,
+    pub to_account_id: String,
+    pub activity_date: String,
+    #[serde(
+        default,
+        deserialize_with = "decimal_input_format::deserialize_option_decimal"
+    )]
+    pub source_amount: Option<Decimal>,
+    #[serde(
+        default,
+        deserialize_with = "decimal_input_format::deserialize_option_decimal"
+    )]
+    pub destination_amount: Option<Decimal>,
+    pub source_currency: String,
+    pub destination_currency: String,
+    #[serde(
+        default,
+        deserialize_with = "decimal_input_format::deserialize_option_decimal"
+    )]
+    pub fx_rate: Option<Decimal>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub transfer_mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InternalTransferPairResponse {
+    pub transfer_out: Activity,
+    pub transfer_in: Activity,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferMatchCandidateRequest {
+    pub activity_id: String,
+    #[serde(default)]
+    pub window_days: Option<i64>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferMatchCandidate {
+    pub activity: Activity,
+    pub match_kind: String,
+    pub confidence: String,
+    pub score: i32,
+    pub reasons: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
 /// Structured error reported for a single bulk mutation entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -769,6 +837,14 @@ pub struct ActivityImport {
     pub instrument_type: Option<String>,
     /// Optional quote mode (e.g., "MANUAL", "MARKET")
     pub quote_mode: Option<String>,
+    /// Market data provider that resolved this import row, if selected.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    /// Provider-native symbol/code selected by search/import.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_symbol: Option<String>,
     pub errors: Option<std::collections::HashMap<String, Vec<String>>>,
     pub warnings: Option<std::collections::HashMap<String, Vec<String>>>,
     #[serde(default)]
@@ -973,6 +1049,10 @@ pub struct ImportAssetCandidate {
     pub exchange_mic: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub isin: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_symbol: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -989,6 +1069,8 @@ pub struct ImportAssetPreviewItem {
     pub key: String,
     pub status: ImportAssetPreviewStatus,
     pub resolution_source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_symbol: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1620,23 +1702,6 @@ pub struct BulkUpsertResult {
     pub skipped: usize,
 }
 
-/// Statistics for a CSV import run, including activity date range.
-/// Used by automation workflows to determine the last imported activity date.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ImportRunStats {
-    /// The import run ID
-    pub import_run_id: String,
-    /// When the import was executed
-    pub imported_at: String,
-    /// Earliest activity date in this import
-    pub earliest_activity_date: Option<String>,
-    /// Latest activity date in this import
-    pub latest_activity_date: Option<String>,
-    /// Number of activities in this import
-    pub total_activities: i64,
-}
-
 /// Activity ready for persistence
 #[derive(Debug, Clone)]
 pub struct PreparedActivity {
@@ -1669,6 +1734,8 @@ impl From<ActivityImport> for NewActivity {
                     quote_mode: import.quote_mode.clone(),
                     quote_ccy: import.quote_ccy.clone(),
                     instrument_type: import.instrument_type.clone(),
+                    provider_id: import.provider_id.clone(),
+                    provider_symbol: import.provider_symbol.clone(),
                 })
         } else {
             Some(AssetResolutionInput {
@@ -1680,6 +1747,8 @@ impl From<ActivityImport> for NewActivity {
                 quote_mode: import.quote_mode.clone(),
                 quote_ccy: import.quote_ccy,
                 instrument_type: import.instrument_type,
+                provider_id: import.provider_id,
+                provider_symbol: import.provider_symbol,
             })
         };
 

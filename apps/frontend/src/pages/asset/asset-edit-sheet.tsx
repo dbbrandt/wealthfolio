@@ -142,7 +142,7 @@ function parseProviderOverrides(
   for (const [provider, value] of Object.entries(source)) {
     if (typeof value === "object" && value !== null) {
       const obj = value as Record<string, unknown>;
-      const symbol = obj.symbol as string;
+      const symbol = (obj.symbol ?? obj.isin) as string;
       if (symbol) {
         result.push({ provider, symbol });
       }
@@ -448,7 +448,9 @@ export function AssetEditSheet({
     },
     [],
   );
-  const { data: taxonomies = [], isLoading: isTaxonomiesLoading } = useTaxonomies();
+  const { data: taxonomies = [], isLoading: isTaxonomiesLoading } = useTaxonomies({
+    scope: "asset",
+  });
   const { updateAssetProfileMutation } = useAssetProfileMutations();
   const { data: marketDataProviders = [] } = useMarketDataProviders();
   const { data: customProviders = [] } = useCustomProviders();

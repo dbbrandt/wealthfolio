@@ -1,4 +1,9 @@
-import { ACTIVITY_SUBTYPES, ActivityType } from "./constants";
+import {
+  ACTIVITY_SUBTYPES,
+  ActivityType,
+  InstrumentType,
+  METADATA_CONTRACT_MULTIPLIER,
+} from "./constants";
 import {
   isCashActivity,
   isCashTransfer,
@@ -8,6 +13,7 @@ import {
   isAssetIdentityRequired,
   needsImportAssetResolution,
   calculateActivityValue,
+  calculateActivityCashImpact,
   formatSplitRatio,
 } from "./activity-utils";
 import { ActivityDetails } from "./types";
@@ -152,6 +158,33 @@ describe("Activity Utilities", () => {
 
       // (10 * 100) - 10 = 990
       expect(calculateActivityValue(activity)).toBe(990);
+    });
+
+    it("should apply the contract multiplier for option BUY activities", () => {
+      const activity = createActivity({
+        activityType: ActivityType.BUY,
+        instrumentType: InstrumentType.OPTION,
+        quantity: "2",
+        unitPrice: "3",
+        fee: "1",
+      });
+
+      // (2 * 3 * 100) + 1 = 601
+      expect(calculateActivityValue(activity)).toBe(601);
+    });
+
+    it("should honor a non-default contract multiplier from metadata", () => {
+      const activity = createActivity({
+        activityType: ActivityType.SELL,
+        instrumentType: InstrumentType.OPTION,
+        quantity: "2",
+        unitPrice: "5",
+        fee: "0",
+        metadata: { [METADATA_CONTRACT_MULTIPLIER]: 10 },
+      });
+
+      // (2 * 5 * 10) - 0 = 100
+      expect(calculateActivityValue(activity)).toBe(100);
     });
 
     it("should calculate DEPOSIT activity value correctly", () => {
@@ -336,6 +369,92 @@ describe("Activity Utilities", () => {
 
       // Transfer out of securities: qty × price + fee (mirrors SELL-like handling for value display)
       expect(calculateActivityValue(transferOut)).toBe(1500);
+    });
+
+    it("calculates signed cash impact for trading and cash activities", () => {
+      expect(
+        calculateActivityCashImpact(
+          createActivity({
+            activityType: ActivityType.BUY,
+            quantity: "10",
+            unitPrice: "100",
+            fee: "10",
+          }),
+        ),
+      ).toBe(-1010);
+
+      expect(
+        calculateActivityCashImpact(
+          createActivity({
+            activityType: ActivityType.SELL,
+            quantity: "10",
+            unitPrice: "100",
+            fee: "10",
+          }),
+        ),
+      ).toBe(990);
+
+      expect(
+        calculateActivityCashImpact(
+          createActivity({
+            activityType: ActivityType.DEPOSIT,
+            amount: "500",
+            fee: "0",
+          }),
+        ),
+      ).toBe(500);
+
+      expect(
+        calculateActivityCashImpact(
+          createActivity({
+            activityType: ActivityType.WITHDRAWAL,
+            amount: "100",
+            fee: "5",
+          }),
+        ),
+      ).toBe(-105);
+    });
+
+    it("does not treat securities transfers or asset-backed income as cash impact", () => {
+      expect(
+        calculateActivityCashImpact(
+          createActivity({
+            activityType: ActivityType.TRANSFER_IN,
+            assetSymbol: "AAPL",
+            assetId: "AAPL",
+            quantity: "10",
+            unitPrice: "100",
+            amount: "0",
+            fee: "0",
+          }),
+        ),
+      ).toBe(0);
+
+      expect(
+        calculateActivityCashImpact(
+          createActivity({
+            activityType: ActivityType.DIVIDEND,
+            subtype: ACTIVITY_SUBTYPES.DRIP,
+            quantity: "1",
+            unitPrice: "100",
+            amount: "100",
+            fee: "0",
+          }),
+        ),
+      ).toBe(0);
+
+      expect(
+        calculateActivityCashImpact(
+          createActivity({
+            activityType: ActivityType.DIVIDEND,
+            subtype: null,
+            assetSymbol: "AAPL",
+            assetId: "AAPL",
+            amount: "100",
+            fee: "0",
+          }),
+        ),
+      ).toBe(100);
     });
   });
 

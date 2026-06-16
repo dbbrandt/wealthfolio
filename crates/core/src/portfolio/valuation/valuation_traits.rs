@@ -12,6 +12,15 @@ pub trait ValuationRepositoryTrait: Send + Sync {
     /// Save multiple valuation records to the database.
     async fn save_valuations(&self, valuation_records: &[DailyAccountValuation]) -> Result<()>;
 
+    /// Atomically replace valuation rows for an account/date range.
+    /// If `since_date` is `None`, replaces all rows for the account.
+    async fn replace_valuations_for_account(
+        &self,
+        account_id: &str,
+        since_date: Option<NaiveDate>,
+        valuation_records: &[DailyAccountValuation],
+    ) -> Result<()>;
+
     /// Get historical valuations for a specific account within optional date range.
     fn get_historical_valuations(
         &self,
@@ -19,6 +28,32 @@ pub trait ValuationRepositoryTrait: Send + Sync {
         start_date: Option<NaiveDate>,
         end_date: Option<NaiveDate>,
     ) -> Result<Vec<DailyAccountValuation>>;
+
+    /// Get historical valuations for multiple real accounts in one ordered read.
+    fn get_historical_valuations_for_accounts(
+        &self,
+        account_ids: &[String],
+        start_date: Option<NaiveDate>,
+        end_date: Option<NaiveDate>,
+    ) -> Result<Vec<DailyAccountValuation>>;
+
+    /// Returns the latest calculation timestamp for a scoped history read.
+    ///
+    /// Implementations can answer this with a cheap aggregate query so callers can
+    /// check aggregate-history caches before loading the full valuation rows.
+    fn get_max_calculated_at_for_accounts(
+        &self,
+        account_ids: &[String],
+        start_date: Option<NaiveDate>,
+        end_date: Option<NaiveDate>,
+    ) -> Result<Option<String>> {
+        let max_calculated_at = self
+            .get_historical_valuations_for_accounts(account_ids, start_date, end_date)?
+            .into_iter()
+            .map(|valuation| valuation.calculated_at.to_rfc3339())
+            .max();
+        Ok(max_calculated_at)
+    }
 
     /// Get the latest valuation date for a specific account.
     fn load_latest_valuation_date(&self, account_id: &str) -> Result<Option<NaiveDate>>;

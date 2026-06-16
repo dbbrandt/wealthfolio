@@ -1,5 +1,6 @@
 // AI Assistant Feature Types
 
+import type { NewCategorizationRule } from "@/features/spending/types/rule";
 import type { MergedProvider } from "@/lib/types";
 
 // Re-export API types for convenience
@@ -564,6 +565,7 @@ export interface ImportCsvAccountOption {
   id: string;
   name: string;
   currency: string;
+  accountType?: string;
 }
 
 /**
@@ -625,4 +627,264 @@ export interface ImportCsvMappingOutput extends ImportCsvSubmissionResult {
   availableAccounts: ImportCsvAccountOption[];
   /** True when the mapping came from a saved template (no LLM inference). */
   usedSavedProfile?: boolean;
+}
+
+// ============================================================================
+// Propose Transaction Categories tool
+// ============================================================================
+
+export interface ProposeCategoriesArgs {
+  activityIds?: string[];
+  accountIds?: string[];
+  status?: "uncategorized" | "all" | "needs_review";
+  startDate?: string;
+  endDate?: string;
+  limit?: number;
+  aiProposals?: {
+    activityId: string;
+    taxonomyId: string;
+    categoryKey: string;
+    confidence?: number;
+    reason?: string;
+  }[];
+}
+
+export interface ListCategorizationContextArgs {
+  activityIds?: string[];
+  accountIds?: string[];
+  status?: "uncategorized" | "all" | "needs_review";
+  startDate?: string;
+  endDate?: string;
+  limit?: number;
+}
+
+export interface ListCategorizationContextOutput {
+  taxonomies: ProposeTaxonomySummary[];
+  examples: ProposeCategoryExample[];
+  unproposed: ProposeCategoryUnproposed[];
+  summary: {
+    total: number;
+    deterministicallyProposed: number;
+    needsAiJudgement: number;
+  };
+  nextStep?: string;
+}
+
+export interface ProposeCategoryOption {
+  categoryId: string;
+  key: string;
+  name: string;
+  path: string;
+  color: string;
+}
+
+export interface ProposeTaxonomySummary {
+  taxonomyId: string;
+  taxonomyName: string;
+  categories: ProposeCategoryOption[];
+}
+
+export interface ProposeCategoryExample {
+  categoryId: string;
+  categoryPath: string;
+  notes: string;
+}
+
+export interface ProposeCategoryProposal {
+  activityId: string;
+  activityDate: string;
+  amount: number;
+  currency: string;
+  notes: string | null;
+  taxonomyId: string;
+  categoryId: string;
+  categoryPath: string;
+  confidence: number;
+  source: "rule" | "history" | "ai" | "manual";
+  explanation: string;
+}
+
+export interface ProposeCategoryUnproposed {
+  activityId: string;
+  activityDate: string;
+  amount: number;
+  currency: string;
+  notes: string | null;
+  reason: string;
+}
+
+export interface ProposeCategoriesSummary {
+  total: number;
+  proposed: number;
+  unproposed: number;
+  avgConfidence: number;
+}
+
+export interface ProposeCategoriesOutput {
+  proposals: ProposeCategoryProposal[];
+  unproposed: ProposeCategoryUnproposed[];
+  summary: ProposeCategoriesSummary;
+  taxonomies: ProposeTaxonomySummary[];
+  examples: ProposeCategoryExample[];
+  /** "draft" when awaiting review, "applied" after the user clicks Apply. */
+  draftStatus?: "draft" | "applied";
+  /** Frontend-applied state, persisted via updateToolResult. */
+  submitted?: boolean;
+  appliedCount?: number;
+  submittedAt?: string;
+}
+
+// ============================================================================
+// Asset Classification tools
+// ============================================================================
+
+export interface ListAssetTaxonomiesArgs {
+  taxonomyId?: string;
+  taxonomyName?: string;
+  includeCategories?: boolean;
+  categoryDepth?: "root" | "all";
+}
+
+export interface AssetTaxonomyCategoryOption {
+  categoryId: string;
+  taxonomyId: string;
+  parentId?: string | null;
+  name: string;
+  key: string;
+  color: string;
+  sortOrder: number;
+}
+
+export interface AssetTaxonomyOption {
+  taxonomyId: string;
+  name: string;
+  description?: string | null;
+  color: string;
+  isSingleSelect: boolean;
+  sortOrder: number;
+  categoryCount?: number;
+  categories?: AssetTaxonomyCategoryOption[];
+}
+
+export interface ListAssetTaxonomiesOutput {
+  taxonomies: AssetTaxonomyOption[];
+}
+
+export interface GetAssetTaxonomyAssignmentsArgs {
+  assetQuery: string;
+  taxonomyId?: string;
+}
+
+export interface AssetClassificationResolvedAsset {
+  assetId: string;
+  label: string;
+  displayCode?: string | null;
+  symbol?: string | null;
+  name?: string | null;
+  exchangeMic?: string | null;
+  currency: string;
+  matchedBy: string;
+}
+
+export interface AssetTaxonomyAssignmentResult {
+  assignmentId: string;
+  taxonomyId: string;
+  taxonomyName: string;
+  categoryId: string;
+  categoryName: string;
+  categoryKey: string;
+  weightBasisPoints: number;
+  source: string;
+}
+
+export interface GetAssetTaxonomyAssignmentsOutput {
+  assetQuery: string;
+  resolvedAsset: AssetClassificationResolvedAsset;
+  assignments: AssetTaxonomyAssignmentResult[];
+}
+
+export interface PrepareAssetClassificationArgs {
+  assetQuery: string;
+  taxonomyId: string;
+  assignments: {
+    categoryId: string;
+    weightBasisPoints: number;
+    sourceLabel: string;
+  }[];
+}
+
+export interface PreparedAssetTaxonomy {
+  taxonomyId: string;
+  name: string;
+  isSingleSelect: boolean;
+}
+
+export interface AssetClassificationAssignmentPreview {
+  assignmentId?: string | null;
+  categoryId: string;
+  categoryName: string;
+  categoryKey: string;
+  categoryColor?: string | null;
+  weightBasisPoints: number;
+  source: string;
+  sourceLabel?: string | null;
+}
+
+export interface AssetClassificationChanges {
+  addCount: number;
+  updateCount: number;
+  removeCount: number;
+  unchangedCount: number;
+}
+
+export interface AssetClassificationCandidateCurrentAssignments {
+  assetId: string;
+  currentAssignments: AssetClassificationAssignmentPreview[];
+  changes: AssetClassificationChanges;
+}
+
+export interface PrepareAssetClassificationOutput {
+  assetQuery: string;
+  resolvedAsset?: AssetClassificationResolvedAsset | null;
+  taxonomy: PreparedAssetTaxonomy;
+  currentAssignments: AssetClassificationAssignmentPreview[];
+  proposedAssignments: AssetClassificationAssignmentPreview[];
+  changes: AssetClassificationChanges;
+  unallocatedBasisPoints: number;
+  draftStatus?: "draft" | "applied" | "needsAssetSelection" | "assetSelected";
+  assetCandidates?: AssetClassificationResolvedAsset[];
+  candidateCurrentAssignments?: AssetClassificationCandidateCurrentAssignments[];
+  selectedAssetId?: string;
+  selectedAsset?: AssetClassificationResolvedAsset | null;
+  selectedAt?: string;
+  appliedAt?: string;
+  appliedChanges?: AssetClassificationChanges;
+}
+
+// ============================================================================
+// Create Categorization Rule tool
+// ============================================================================
+
+export interface CreateCategorizationRuleArgs {
+  name?: string;
+  pattern: string;
+  matchType?: "contains" | "starts_with" | "exact" | "regex";
+  taxonomyId: string;
+  categoryKey: string;
+  activityType?: string;
+  accountId?: string;
+}
+
+export interface CreateCategorizationRuleOutput {
+  draftStatus?: "draft" | "created";
+  ruleId?: string | null;
+  rule?: NewCategorizationRule;
+  categoryPath?: string;
+  accountName?: string | null;
+  message?: string;
+  submitted?: boolean;
+  submittedAt?: string;
+  ruleName?: string;
+  pattern?: string;
+  matchType?: string;
 }

@@ -23,8 +23,62 @@ use log::error;
 use log::warn;
 use tauri::{AppHandle, Emitter, Manager};
 
-use events::emit_app_ready;
+use events::{emit_app_ready, emit_portfolio_trigger_recalculate, PortfolioRequestPayload};
 use tauri_plugin_deep_link::DeepLinkExt;
+
+fn portfolio_history_backfill_needed(context: &Arc<context::ServiceContext>) -> bool {
+    let accounts = match context.account_service().get_non_archived_accounts() {
+        Ok(accounts) => accounts,
+        Err(err) => {
+            error!("Failed to inspect accounts for valuation backfill: {}", err);
+            return false;
+        }
+    };
+    let account_ids: Vec<String> = accounts.into_iter().map(|account| account.id).collect();
+    if account_ids.is_empty() {
+        return false;
+    }
+
+    let latest = match context
+        .valuation_service()
+        .get_latest_valuations(&account_ids)
+    {
+        Ok(latest) => latest,
+        Err(err) => {
+            error!("Failed to inspect valuation history for backfill: {}", err);
+            return false;
+        }
+    };
+    let accounts_with_valuations: std::collections::HashSet<_> = latest
+        .into_iter()
+        .map(|valuation| valuation.account_id)
+        .collect();
+    let missing_ids: Vec<String> = account_ids
+        .into_iter()
+        .filter(|account_id| !accounts_with_valuations.contains(account_id))
+        .collect();
+    if missing_ids.is_empty() {
+        return false;
+    }
+
+    if matches!(
+        context
+            .activity_service()
+            .get_first_activity_date(Some(&missing_ids)),
+        Ok(Some(_))
+    ) {
+        return true;
+    }
+
+    missing_ids.iter().any(|account_id| {
+        matches!(
+            context
+                .snapshot_service()
+                .get_latest_holdings_snapshot(account_id),
+            Ok(Some(_))
+        )
+    })
+}
 
 #[cfg(feature = "device-sync")]
 fn start_sync_outbox_wake_worker(
@@ -119,6 +173,10 @@ mod desktop {
         // The frontend will trigger the initial portfolio update and update check after it's mounted
         emit_app_ready(&handle);
 
+        if portfolio_history_backfill_needed(&context) {
+            emit_portfolio_trigger_recalculate(&handle, PortfolioRequestPayload::builder().build());
+        }
+
         // Trigger startup sync (async, non-blocking)
         // After this, user manually triggers sync via button
         let startup_handle = handle.clone();
@@ -202,6 +260,13 @@ mod mobile {
                     // Notify frontend that app is ready
                     // The frontend will trigger the initial portfolio update after it's mounted
                     emit_app_ready(&handle);
+
+                    if portfolio_history_backfill_needed(&context) {
+                        emit_portfolio_trigger_recalculate(
+                            &handle,
+                            PortfolioRequestPayload::builder().build(),
+                        );
+                    }
 
                     // Trigger startup broker sync (async, non-blocking).
                     // After this, user manually triggers sync via button.
@@ -347,6 +412,9 @@ pub fn run() {
             commands::activity::update_activity,
             commands::activity::save_activities,
             commands::activity::delete_activity,
+            commands::activity::get_transfer_pair_for_activity,
+            commands::activity::find_transfer_match_candidates,
+            commands::activity::save_internal_transfer_pair,
             commands::activity::link_transfer_activities,
             commands::activity::unlink_transfer_activities,
             commands::activity::check_activities_import,
@@ -369,6 +437,46 @@ pub fn run() {
             commands::settings::update_exchange_rate,
             commands::settings::add_exchange_rate,
             commands::settings::delete_exchange_rate,
+            // Spending commands
+            commands::spending::get_spending_settings,
+            commands::spending::update_spending_settings,
+            commands::spending::list_cash_activities,
+            commands::spending::search_cash_activities,
+            commands::spending::set_activity_event,
+            commands::spending::get_activity_assignments,
+            commands::spending::assign_activity_category,
+            commands::spending::unassign_activity_category,
+            commands::spending::bulk_assign_categories,
+            commands::spending::list_categorization_rules,
+            commands::spending::create_categorization_rule,
+            commands::spending::update_categorization_rule,
+            commands::spending::delete_categorization_rule,
+            commands::spending::rerun_categorization_rules,
+            commands::spending::list_rule_presets,
+            commands::spending::import_rule_preset,
+            commands::spending::remove_rule_preset,
+            commands::spending::list_event_types,
+            commands::spending::create_event_type,
+            commands::spending::update_event_type,
+            commands::spending::delete_event_type,
+            commands::spending::list_events,
+            commands::spending::create_event,
+            commands::spending::update_event,
+            commands::spending::delete_event,
+            commands::spending::get_budget,
+            commands::spending::upsert_budget_target,
+            commands::spending::delete_budget_target,
+            commands::spending::upsert_budget_rollover_setting,
+            commands::spending::delete_budget_rollover_setting,
+            commands::spending::create_budget_group,
+            commands::spending::update_budget_group,
+            commands::spending::delete_budget_group,
+            commands::spending::assign_category_to_group,
+            commands::spending::reset_budget_groups,
+            commands::spending::copy_budget_targets,
+            commands::spending::get_spending_report,
+            commands::spending::get_spending_insight,
+            commands::spending::get_event_spending_summaries,
             // Goal commands
             commands::goal::create_goal,
             commands::goal::update_goal,
@@ -385,21 +493,30 @@ pub fn run() {
             commands::goal::get_retirement_overview,
             commands::goal::get_save_up_overview,
             commands::goal::preview_save_up_overview,
+            // Portfolios (saved reporting scopes)
+            commands::portfolios::get_portfolios,
+            commands::portfolios::get_portfolio,
+            commands::portfolios::create_portfolio,
+            commands::portfolios::update_portfolio_entry,
+            commands::portfolios::delete_portfolio_entry,
             // Portfolio commands
             commands::portfolio::get_holdings,
             commands::portfolio::get_holding,
             commands::portfolio::get_asset_holdings,
+            commands::portfolio::get_asset_lots,
             commands::portfolio::get_portfolio_allocations,
             commands::portfolio::get_holdings_by_allocation,
             commands::portfolio::get_income_summary,
             commands::portfolio::get_historical_valuations,
             commands::portfolio::get_latest_valuations,
+            commands::portfolio::get_current_valuation,
             commands::portfolio::calculate_accounts_simple_performance,
             commands::portfolio::update_portfolio,
             commands::portfolio::recalculate_portfolio,
             commands::portfolio::rebuild_portfolio,
             commands::portfolio::calculate_performance_summary,
             commands::portfolio::calculate_performance_history,
+            commands::portfolio::get_performance_summaries,
             commands::portfolio::save_manual_holdings,
             commands::portfolio::import_holdings_csv,
             commands::portfolio::check_holdings_import,
@@ -413,10 +530,17 @@ pub fn run() {
             commands::limits::delete_contribution_limit,
             commands::limits::calculate_deposits_for_contribution_limit,
             // Utility commands
+            commands::utilities::save_text_file_with_dialog,
+            commands::utilities::save_file_with_dialog,
+            commands::utilities::write_pending_export_text_file,
+            commands::utilities::write_pending_export_file,
+            commands::utilities::export_data_file,
+            commands::utilities::open_external_url,
             commands::utilities::get_app_info,
             commands::utilities::check_for_updates,
             commands::utilities::install_app_update,
             commands::utilities::backup_database,
+            commands::utilities::backup_database_to_pending_export,
             commands::utilities::backup_database_to_path,
             commands::utilities::restore_database,
             // Asset commands
@@ -449,7 +573,7 @@ pub fn run() {
             commands::market_data::check_quotes_import,
             commands::market_data::import_quotes_csv,
             commands::market_data::get_exchanges,
-            commands::market_data::fetch_yahoo_dividends,
+            commands::market_data::fetch_dividends,
             // Taxonomy commands
             commands::taxonomy::get_taxonomies,
             commands::taxonomy::get_taxonomy,
@@ -464,6 +588,7 @@ pub fn run() {
             commands::taxonomy::export_taxonomy_json,
             commands::taxonomy::get_asset_taxonomy_assignments,
             commands::taxonomy::assign_asset_to_category,
+            commands::taxonomy::replace_asset_taxonomy_assignments,
             commands::taxonomy::remove_asset_taxonomy_assignment,
             // Taxonomy migration commands
             commands::taxonomy::get_migration_status,
@@ -673,6 +798,18 @@ pub fn run() {
             commands::health::execute_health_fix,
             commands::health::get_health_config,
             commands::health::update_health_config,
+            // Allocation target commands
+            commands::allocation_targets::list_allocation_targets,
+            commands::allocation_targets::get_allocation_target,
+            commands::allocation_targets::create_allocation_target,
+            commands::allocation_targets::update_allocation_target,
+            commands::allocation_targets::archive_allocation_target,
+            commands::allocation_targets::delete_allocation_target,
+            commands::allocation_targets::list_allocation_target_weights,
+            commands::allocation_targets::save_allocation_target_weights,
+            commands::allocation_targets::save_allocation_target_with_weights,
+            commands::allocation_targets::get_allocation_target_drift,
+            commands::allocation_targets::calculate_rebalance_plan,
             // RetirementPlan-based FIRE commands
             commands::fire::calculate_retirement_projection,
             commands::fire::run_retirement_decision_sensitivity_map,

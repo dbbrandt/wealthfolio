@@ -8,7 +8,7 @@ import {
   useAssistantState,
 } from "@assistant-ui/react";
 
-import type { FC, ReactNode } from "react";
+import { Component, type ErrorInfo, type FC, type ReactNode } from "react";
 
 import { Button } from "@wealthfolio/ui/components/ui/button";
 import { Icons } from "@wealthfolio/ui/components/ui/icons";
@@ -53,8 +53,8 @@ export const Thread: FC<ThreadProps> = ({ composerActions }) => {
             }}
           />
           {/* Spacer to prevent last message from being hidden behind sticky composer + mobile nav */}
-          <div className="h-[calc(var(--mobile-nav-ui-height)+max(var(--mobile-nav-gap),env(safe-area-inset-bottom)))] shrink-0 md:h-0" />
-          <ThreadPrimitive.ViewportFooter className="aui-thread-viewport-footer bg-background max-w-(--thread-max-width) sticky bottom-[calc(var(--mobile-nav-ui-height)+max(var(--mobile-nav-gap),env(safe-area-inset-bottom)))] z-10 mx-auto mt-auto flex w-full flex-col gap-4 overflow-visible rounded-t-3xl pb-4 md:bottom-0 md:pb-6">
+          <div className="h-[var(--mobile-nav-total-offset)] shrink-0 md:h-0" />
+          <ThreadPrimitive.ViewportFooter className="aui-thread-viewport-footer bg-background max-w-(--thread-max-width) sticky bottom-[var(--mobile-nav-total-offset)] z-10 mx-auto mt-auto flex w-full flex-col gap-4 overflow-visible rounded-t-3xl pb-4 md:bottom-0 md:pb-6">
             <ThreadScrollToBottom />
             <Composer composerActions={composerActions} />
             <p className="text-muted-foreground/70 text-center text-xs">
@@ -226,6 +226,41 @@ interface MessagePartWithResult {
   result?: unknown;
 }
 
+interface ToolRenderErrorBoundaryState {
+  error: Error | null;
+}
+
+class ToolRenderErrorBoundary extends Component<
+  { children: ReactNode },
+  ToolRenderErrorBoundaryState
+> {
+  override state: ToolRenderErrorBoundaryState = { error: null };
+
+  static getDerivedStateFromError(error: Error): ToolRenderErrorBoundaryState {
+    return { error };
+  }
+
+  override componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("Tool UI render failed", {
+      error,
+      componentStack: errorInfo.componentStack,
+    });
+  }
+
+  override render() {
+    if (this.state.error) {
+      return (
+        <div className="border-destructive/30 bg-destructive/5 text-destructive flex items-center gap-2 rounded-md border px-3 py-2 text-xs">
+          <Icons.AlertCircle className="h-4 w-4 shrink-0" />
+          <span>Tool display failed. The chat is still available.</span>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 interface TypingIndicatorProps {
   position: "initial" | "continuation";
 }
@@ -270,7 +305,11 @@ const AssistantMessage: FC = () => {
             Text: MarkdownText,
             Reasoning: Reasoning,
             ReasoningGroup: ReasoningGroup,
-            ToolGroup: ({ children }) => <div className="mb-6 space-y-4">{children}</div>,
+            ToolGroup: ({ children }) => (
+              <ToolRenderErrorBoundary>
+                <div className="mb-6 space-y-4">{children}</div>
+              </ToolRenderErrorBoundary>
+            ),
             tools: {
               Fallback: ToolFallback,
             },

@@ -15,15 +15,22 @@ import { useQuery } from "@tanstack/react-query";
 
 import { getHoldingsByAllocation } from "@/adapters";
 import { TickerAvatar } from "@/components/ticker-avatar";
-import type { TaxonomyAllocation, CategoryAllocation, HoldingSummary } from "@/lib/types";
+import { HoldingType } from "@/lib/constants";
+import type {
+  AccountScope,
+  TaxonomyAllocation,
+  CategoryAllocation,
+  HoldingSummary,
+} from "@/lib/types";
 import { QueryKeys } from "@/lib/query-keys";
+import { cn } from "@/lib/utils";
 import { CompactAllocationStrip } from "./compact-allocation-strip";
 
 interface AllocationDetailSheetProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   allocation?: TaxonomyAllocation;
-  accountId: string;
+  accountFilter: AccountScope;
   baseCurrency: string;
   initialCategoryId?: string | null;
 }
@@ -32,7 +39,7 @@ export function AllocationDetailSheet({
   isOpen,
   onOpenChange,
   allocation,
-  accountId,
+  accountFilter,
   baseCurrency,
   initialCategoryId,
 }: AllocationDetailSheetProps) {
@@ -91,12 +98,16 @@ export function AllocationDetailSheet({
   } = useQuery({
     queryKey: [
       QueryKeys.HOLDINGS_BY_ALLOCATION,
-      accountId,
+      accountFilter,
       allocation?.taxonomyId,
       selectedCategoryId,
     ],
     queryFn: () =>
-      getHoldingsByAllocation(accountId, allocation?.taxonomyId ?? "", selectedCategoryId ?? ""),
+      getHoldingsByAllocation(
+        accountFilter,
+        allocation?.taxonomyId ?? "",
+        selectedCategoryId ?? "",
+      ),
     enabled: !!selectedCategoryId && !!allocation?.taxonomyId,
     staleTime: 30000,
   });
@@ -143,6 +154,7 @@ export function AllocationDetailSheet({
 
   const handleHoldingClick = useCallback(
     (holding: HoldingSummary) => {
+      if (holding.holdingType === HoldingType.CASH) return;
       onOpenChange(false);
       navigate(`/holdings/${encodeURIComponent(holding.id)}`);
     },
@@ -349,31 +361,41 @@ export function AllocationDetailSheet({
                 </div>
               ) : holdings && holdings.length > 0 ? (
                 <div className="divide-y">
-                  {holdings.map((holding) => (
-                    <div
-                      key={holding.id}
-                      className="hover:bg-muted/30 flex cursor-pointer items-center gap-3 py-3 transition-colors"
-                      onClick={() => handleHoldingClick(holding)}
-                    >
-                      <TickerAvatar symbol={holding.symbol} className="h-9 w-9" />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold">{holding.symbol}</p>
-                        <p className="text-muted-foreground truncate text-xs">
-                          {holding.name ?? holding.symbol}
-                        </p>
+                  {holdings.map((holding) => {
+                    const canNavigate = holding.holdingType !== HoldingType.CASH;
+                    const avatarSymbol =
+                      holding.holdingType === HoldingType.CASH
+                        ? `CASH:${holding.currency}`
+                        : holding.symbol;
+                    return (
+                      <div
+                        key={holding.id}
+                        className={cn(
+                          "flex items-center gap-3 py-3 transition-colors",
+                          canNavigate ? "hover:bg-muted/30 cursor-pointer" : "cursor-default",
+                        )}
+                        onClick={() => handleHoldingClick(holding)}
+                      >
+                        <TickerAvatar symbol={avatarSymbol} className="h-9 w-9" />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold">{holding.symbol}</p>
+                          <p className="text-muted-foreground truncate text-xs">
+                            {holding.name ?? holding.symbol}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <AmountDisplay
+                            value={holding.marketValue}
+                            currency={baseCurrency}
+                            className="text-sm font-medium"
+                          />
+                          <p className="text-muted-foreground text-xs">
+                            {holding.weightInCategory.toFixed(1)}%
+                          </p>
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <AmountDisplay
-                          value={holding.marketValue}
-                          currency={baseCurrency}
-                          className="text-sm font-medium"
-                        />
-                        <p className="text-muted-foreground text-xs">
-                          {holding.weightInCategory.toFixed(1)}%
-                        </p>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <p className="text-muted-foreground py-4 text-center text-sm">

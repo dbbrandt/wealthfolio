@@ -13,6 +13,7 @@ import { Button } from "@wealthfolio/ui/components/ui/button";
 export interface ActivityDeleteModalProps {
   isOpen?: boolean;
   isDeleting?: boolean;
+  linkedTransfer?: boolean;
   onConfirm: () => void;
   onCancel?: () => void;
 }
@@ -20,6 +21,7 @@ export interface ActivityDeleteModalProps {
 export function ActivityDeleteModal({
   isOpen,
   isDeleting,
+  linkedTransfer,
   onConfirm,
   onCancel,
 }: ActivityDeleteModalProps) {
@@ -30,9 +32,13 @@ export function ActivityDeleteModal({
           <div className="bg-destructive/10 text-destructive flex size-12 items-center justify-center rounded-full sm:hidden">
             <Icons.Trash className="size-5" />
           </div>
-          <AlertDialogTitle className="leading-tight max-sm:text-xl">Delete activity?</AlertDialogTitle>
+          <AlertDialogTitle className="leading-tight max-sm:text-xl">
+            Delete activity?
+          </AlertDialogTitle>
           <AlertDialogDescription className="max-sm:text-[15px]">
-            This activity will be permanently deleted. This action cannot be undone.
+            {linkedTransfer
+              ? "This activity is linked to a transfer pair. Both sides will be permanently deleted. This action cannot be undone."
+              : "This activity will be permanently deleted. This action cannot be undone."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

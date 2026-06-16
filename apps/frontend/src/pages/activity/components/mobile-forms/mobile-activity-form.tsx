@@ -24,21 +24,28 @@ import {
 } from "@/lib/activity-utils";
 import { buildOccSymbol, parseOccSymbol } from "@/lib/occ-symbol";
 import { generateId } from "@/lib/id";
-import type { ActivityCreate, ActivityDetails } from "@/lib/types";
+import type { ActivityCreate, ActivityDetails, ActivityUpdate } from "@/lib/types";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useForm, type Resolver, type SubmitHandler } from "react-hook-form";
 import { toast } from "sonner";
 import { useActivityMutations } from "../../hooks/use-activity-mutations";
 import { showValidationToast, type AccountSelectOption } from "../forms/fields";
 import { newActivitySchema, type NewActivityFormValues } from "../forms/schemas";
 import { MobileActivitySteps } from "./mobile-activity-steps";
+import { getMobileActivityAssetId } from "./mobile-activity-utils";
 
 interface MobileActivityFormProps {
   accounts: AccountSelectOption[];
+  /**
+   * Full active-account list for transfers. A transfer can target any account,
+   * including spending/saving accounts the Spending split hides from `accounts`.
+   */
+  transferAccounts?: AccountSelectOption[];
   activity?: Partial<ActivityDetails>;
   open?: boolean;
   onClose?: () => void;
+  startOnDetails?: boolean;
 }
 
 export interface TransferValidationInput {
@@ -48,6 +55,10 @@ export interface TransferValidationInput {
   direction?: string;
   toAccountId?: string;
   amount?: number | null;
+  sourceAmount?: number | null;
+  destinationAmount?: number | null;
+  sourceCurrency?: string | null;
+  destinationCurrency?: string | null;
   assetId?: string | null;
   quantity?: number | null;
   unitPrice?: number | null;
@@ -87,6 +98,12 @@ const CASH_AMOUNT_ACTIVITY_TYPES: readonly string[] = [
 ];
 const INCOME_ACTIVITY_TYPES: readonly string[] = [ActivityType.DIVIDEND, ActivityType.INTEREST];
 
+function isValidMobileActivityType(
+  type: string | undefined,
+): type is NewActivityFormValues["activityType"] {
+  return type ? MOBILE_ACTIVITY_TYPES.includes(type) : false;
+}
+
 /**
  * Validates transfer-specific fields that the Zod schema can't enforce
  * (transferActivitySchema lives inside a discriminatedUnion which doesn't support superRefine).
@@ -104,8 +121,30 @@ export function validateTransferFields(
   const isCash = mode === "cash";
   const isSecurities = mode === "securities";
 
-  if (isCash && (!input.amount || input.amount <= 0)) {
+  if (isCash && isExternal && (!input.amount || input.amount <= 0)) {
     return { field: "amount", message: "Please enter an amount." };
+  }
+
+  if (isCash && !isExternal) {
+    const sentAmount = input.sourceAmount ?? input.amount;
+    if (!sentAmount || sentAmount <= 0) {
+      return {
+        field: Object.prototype.hasOwnProperty.call(input, "sourceAmount")
+          ? "sourceAmount"
+          : "amount",
+        message: Object.prototype.hasOwnProperty.call(input, "sourceAmount")
+          ? "Please enter a sent amount."
+          : "Please enter an amount.",
+      };
+    }
+    if (
+      input.sourceCurrency &&
+      input.destinationCurrency &&
+      input.sourceCurrency !== input.destinationCurrency &&
+      (!input.destinationAmount || input.destinationAmount <= 0)
+    ) {
+      return { field: "destinationAmount", message: "Please enter a received amount." };
+    }
   }
 
   if (isSecurities) {
@@ -210,103 +249,163 @@ function extractErrorMessage(error: unknown): string {
   return "Failed to save activity. Please check your inputs and try again.";
 }
 
-export function MobileActivityForm({ accounts, activity, open, onClose }: MobileActivityFormProps) {
-  const [currentStep, setCurrentStep] = useState(activity?.id ? 2 : 1);
-  const { addActivityMutation, updateActivityMutation, saveActivitiesMutation } =
-    useActivityMutations(onClose);
+export function MobileActivityForm({
+  accounts,
+  transferAccounts,
+  activity,
+  open,
+  onClose,
+  startOnDetails,
+}: MobileActivityFormProps) {
+  const shouldStartOnDetails = Boolean(activity?.id || startOnDetails);
+  const initialStep = shouldStartOnDetails ? 2 : 1;
+  const [currentStep, setCurrentStep] = useState(initialStep);
+  const {
+    addActivityMutation,
+    updateActivityMutation,
+    saveActivitiesMutation,
+    saveInternalTransferPairMutation,
+  } = useActivityMutations(onClose);
 
-  const isValidActivityType = (
-    type: string | undefined,
-  ): type is NewActivityFormValues["activityType"] => {
-    return type ? MOBILE_ACTIVITY_TYPES.includes(type) : false;
-  };
+  const defaultValues = useMemo<Partial<NewActivityFormValues>>(() => {
+    // Derive transfer mode from existing activity data
+    const isTransferType =
+      activity?.activityType === ActivityType.TRANSFER_IN ||
+      activity?.activityType === ActivityType.TRANSFER_OUT;
+    const isSecurityTransferActivity =
+      isTransferType &&
+      isSecuritiesTransfer(activity?.activityType ?? "", activity?.assetSymbol, activity?.assetId);
+    const initialTransferMode = isSecurityTransferActivity ? "securities" : "cash";
+    const flowMetadata = activity?.metadata?.flow as { is_external?: boolean } | undefined;
+    const initialIsExternal = isTransferType ? flowMetadata?.is_external === true : false;
+    const editingTransferIn = activity?.activityType === ActivityType.TRANSFER_IN;
+    const sourceAmount = editingTransferIn
+      ? activity?.counterpartAmount
+        ? Number(activity.counterpartAmount)
+        : undefined
+      : activity?.amount
+        ? Number(activity.amount)
+        : undefined;
+    const destinationAmount = editingTransferIn
+      ? activity?.amount
+        ? Number(activity.amount)
+        : undefined
+      : activity?.counterpartAmount
+        ? Number(activity.counterpartAmount)
+        : activity?.amount
+          ? Number(activity.amount)
+          : undefined;
+    const pairFxRate = activity?.fxRate ?? activity?.counterpartFxRate;
+    const fxRate = pairFxRate ? Number(pairFxRate) : undefined;
 
-  // Derive transfer mode from existing activity data
-  const isTransferType =
-    activity?.activityType === ActivityType.TRANSFER_IN ||
-    activity?.activityType === ActivityType.TRANSFER_OUT;
-  const isSecurityTransferActivity =
-    isTransferType &&
-    isSecuritiesTransfer(activity?.activityType ?? "", activity?.assetSymbol, activity?.assetId);
-  const initialTransferMode = isSecurityTransferActivity ? "securities" : "cash";
+    // Detect option/bond activities for editing
+    const isOptionActivity = activity?.instrumentType === "OPTION";
+    const isBondActivity = activity?.instrumentType === "BOND";
+    const parsedOcc = isOptionActivity ? parseOccSymbol(activity?.assetSymbol ?? "") : null;
 
-  // Detect option/bond activities for editing
-  const isOptionActivity = activity?.instrumentType === "OPTION";
-  const isBondActivity = activity?.instrumentType === "BOND";
-  const parsedOcc = isOptionActivity ? parseOccSymbol(activity?.assetSymbol ?? "") : null;
-
-  const defaultValues: Partial<NewActivityFormValues> = {
-    id: activity?.id,
-    accountId: activity?.accountId ?? "",
-    activityType: isValidActivityType(activity?.activityType) ? activity.activityType : undefined,
-    amount: activity?.amount ? Number(activity.amount) : undefined,
-    quantity:
-      isTransferType && !isSecurityTransferActivity
-        ? undefined
-        : activity?.quantity
-          ? Number(activity.quantity)
-          : undefined,
-    unitPrice:
-      isTransferType && !isSecurityTransferActivity
-        ? undefined
-        : activity?.unitPrice
-          ? Number(activity.unitPrice)
-          : undefined,
-    fee: activity?.fee ? Number(activity.fee) : 0,
-    comment: activity?.comment ?? null,
-    subtype: activity?.subtype ?? null,
-    assetId:
-      isTransferType && !isSecurityTransferActivity
-        ? undefined
-        : (activity?.assetSymbol ?? activity?.assetId),
-    activityDate: activity?.date
-      ? new Date(activity.date)
-      : (() => {
-          const date = new Date();
-          date.setHours(16, 0, 0, 0);
-          return date;
-        })(),
-    currency: activity?.currency ?? "",
-    quoteMode: activity?.assetQuoteMode === QuoteMode.MANUAL ? QuoteMode.MANUAL : QuoteMode.MARKET,
-    exchangeMic: activity?.exchangeMic,
-    showCurrencySelect: false,
-    ...(isTransferType && {
-      transferMode: initialTransferMode,
-      isExternal: true,
-      direction: activity?.activityType === ActivityType.TRANSFER_IN ? "in" : "out",
-      toAccountId: "",
-    }),
-    // Option defaults when editing an option activity
-    ...(isOptionActivity && {
-      assetType: "option" as const,
-      assetKind: "OPTION",
-      symbolQuoteCcy: activity?.currency ?? undefined,
-      underlyingSymbol: parsedOcc?.underlying ?? "",
-      strikePrice: parsedOcc?.strikePrice,
-      expirationDate: parsedOcc?.expiration,
-      optionType: parsedOcc?.optionType,
-      contractMultiplier: 100,
-    }),
-    // Bond defaults when editing a bond activity
-    ...(isBondActivity && {
-      assetType: "bond" as const,
-      assetKind: "BOND",
-      symbolQuoteCcy: activity?.currency ?? undefined,
-    }),
-  };
+    return {
+      id: activity?.id,
+      accountId:
+        isTransferType && !initialIsExternal && editingTransferIn
+          ? (activity?.counterpartAccountId ?? "")
+          : (activity?.accountId ?? ""),
+      activityType: isValidMobileActivityType(activity?.activityType)
+        ? activity.activityType
+        : undefined,
+      amount: activity?.amount ? Number(activity.amount) : undefined,
+      sourceAmount,
+      destinationAmount,
+      sourceCurrency: editingTransferIn
+        ? (activity?.counterpartCurrency ?? activity?.currency)
+        : activity?.currency,
+      destinationCurrency: editingTransferIn
+        ? activity?.currency
+        : (activity?.counterpartCurrency ?? activity?.currency),
+      quantity:
+        isTransferType && !isSecurityTransferActivity
+          ? undefined
+          : activity?.quantity
+            ? Number(activity.quantity)
+            : undefined,
+      unitPrice:
+        isTransferType && !isSecurityTransferActivity
+          ? undefined
+          : activity?.unitPrice
+            ? Number(activity.unitPrice)
+            : undefined,
+      fee: activity?.fee ? Number(activity.fee) : 0,
+      comment: activity?.comment ?? null,
+      subtype: activity?.subtype ?? null,
+      fxRate,
+      assetId:
+        isTransferType && !isSecurityTransferActivity
+          ? undefined
+          : getMobileActivityAssetId(activity),
+      activityDate: activity?.date ? new Date(activity.date) : new Date(),
+      currency: activity?.currency ?? "",
+      quoteMode:
+        activity?.assetQuoteMode === QuoteMode.MANUAL ? QuoteMode.MANUAL : QuoteMode.MARKET,
+      exchangeMic: activity?.exchangeMic,
+      showCurrencySelect: false,
+      ...(isTransferType && {
+        transferMode: initialTransferMode,
+        isExternal: initialIsExternal,
+        direction: activity?.activityType === ActivityType.TRANSFER_IN ? "in" : "out",
+        toAccountId: !initialIsExternal
+          ? editingTransferIn
+            ? (activity?.accountId ?? "")
+            : (activity?.counterpartAccountId ?? "")
+          : "",
+      }),
+      // Option defaults when editing an option activity
+      ...(isOptionActivity && {
+        assetType: "option" as const,
+        assetKind: "OPTION",
+        symbolQuoteCcy: activity?.currency ?? undefined,
+        underlyingSymbol: parsedOcc?.underlying ?? "",
+        strikePrice: parsedOcc?.strikePrice,
+        expirationDate: parsedOcc?.expiration,
+        optionType: parsedOcc?.optionType,
+        contractMultiplier: 100,
+      }),
+      // Bond defaults when editing a bond activity
+      ...(isBondActivity && {
+        assetType: "bond" as const,
+        assetKind: "BOND",
+        symbolQuoteCcy: activity?.currency ?? undefined,
+      }),
+    };
+  }, [activity]);
 
   const form = useForm<NewActivityFormValues>({
     resolver: zodResolver(newActivitySchema) as Resolver<NewActivityFormValues>,
     defaultValues: defaultValues as any,
   });
+  const { reset } = form;
+
+  useEffect(() => {
+    if (!open) return;
+
+    const nextDefaultValues = activity?.date
+      ? defaultValues
+      : { ...defaultValues, activityDate: new Date() };
+
+    reset(nextDefaultValues);
+    setCurrentStep(shouldStartOnDetails ? 2 : 1);
+  }, [activity?.date, defaultValues, open, reset, shouldStartOnDetails]);
+
+  // Transfers may target any account (incl. spending/saving accounts the Spending
+  // split hides from `accounts`), so widen the list once the type is a transfer.
+  const watchedActivityType = form.watch("activityType");
+  const effectiveAccounts =
+    transferAccounts && TRANSFER_ACTIVITY_TYPES.includes(watchedActivityType ?? "")
+      ? transferAccounts
+      : accounts;
 
   // Handle sheet close - reset form and step
   const handleOpenChange = (isOpen: boolean) => {
     if (!isOpen) {
-      // Reset step when closing (unless editing)
-      if (!activity?.id) {
-        setCurrentStep(1);
-      }
+      setCurrentStep(shouldStartOnDetails ? 2 : 1);
       form.reset(defaultValues);
     }
     onClose?.();
@@ -315,7 +414,8 @@ export function MobileActivityForm({ accounts, activity, open, onClose }: Mobile
   const isLoading =
     addActivityMutation.isPending ||
     updateActivityMutation.isPending ||
-    saveActivitiesMutation.isPending;
+    saveActivitiesMutation.isPending ||
+    saveInternalTransferPairMutation.isPending;
 
   const onSubmit: SubmitHandler<NewActivityFormValues> = async (data) => {
     try {
@@ -335,7 +435,7 @@ export function MobileActivityForm({ accounts, activity, open, onClose }: Mobile
         id,
         ...submitData
       } = data as any;
-      const account = accounts.find((a) => a.value === submitData.accountId);
+      const account = effectiveAccounts.find((a) => a.value === submitData.accountId);
       const isTransferActivity = TRANSFER_ACTIVITY_TYPES.includes(submitData.activityType);
       const isSecuritiesTransfer = isTransferActivity && (_tm ?? "cash") === "securities";
       const isAssetBackedIncome = isAssetBackedIncomeSubtype(
@@ -392,6 +492,10 @@ export function MobileActivityForm({ accounts, activity, open, onClose }: Mobile
         direction: _direction,
         toAccountId: _toAccountId,
         amount: submitData.amount,
+        sourceAmount: submitData.sourceAmount,
+        destinationAmount: submitData.destinationAmount,
+        sourceCurrency: submitData.sourceCurrency,
+        destinationCurrency: submitData.destinationCurrency,
         assetId: submitData.assetId,
         quantity: submitData.quantity,
         unitPrice: submitData.unitPrice,
@@ -406,8 +510,60 @@ export function MobileActivityForm({ accounts, activity, open, onClose }: Mobile
       // Internal transfer: create paired TRANSFER_OUT + TRANSFER_IN activities
       if (isTransferActivity && !transferIsExternal && _toAccountId) {
         const fromAccount = account;
-        const toAccount = accounts.find((a) => a.value === _toAccountId);
-        const sourceGroupId = generateId("wf-transfer");
+        const toAccount = effectiveAccounts.find((a) => a.value === _toAccountId);
+
+        if (!isSecuritiesTransfer) {
+          const sourceAmount = submitData.sourceAmount ?? submitData.amount;
+          const sourceCurrency = submitData.sourceCurrency ?? fromAccount?.currency;
+          const destinationCurrency =
+            submitData.destinationCurrency ?? toAccount?.currency ?? sourceCurrency;
+          const destinationAmount =
+            sourceCurrency === destinationCurrency
+              ? sourceAmount
+              : (submitData.destinationAmount ??
+                (sourceAmount && submitData.fxRate ? sourceAmount * submitData.fxRate : undefined));
+
+          if (!sourceAmount || !destinationAmount || !sourceCurrency || !destinationCurrency) {
+            throw new Error("Transfer amount and currencies are required.");
+          }
+
+          const transferOutId =
+            activity?.transferOutId ??
+            (activity?.activityType === ActivityType.TRANSFER_OUT
+              ? activity.id
+              : activity?.counterpartActivityId);
+          const transferInId =
+            activity?.transferInId ??
+            (activity?.activityType === ActivityType.TRANSFER_IN
+              ? activity.id
+              : activity?.counterpartActivityId);
+
+          if (id && (!transferOutId || !transferInId)) {
+            throw new Error(
+              "Use Link transfer... to pair this existing transfer before saving it as internal.",
+            );
+          }
+
+          await saveInternalTransferPairMutation.mutateAsync({
+            transferOutId: id ? transferOutId : undefined,
+            transferInId: id ? transferInId : undefined,
+            fromAccountId: submitData.accountId,
+            toAccountId: _toAccountId,
+            activityDate: submitData.activityDate,
+            sourceAmount,
+            destinationAmount,
+            sourceCurrency,
+            destinationCurrency,
+            fxRate:
+              sourceCurrency === destinationCurrency ? undefined : (submitData.fxRate ?? null),
+            notes: submitData.comment ?? null,
+            transferMode: "cash",
+          });
+
+          form.reset(defaultValues);
+          setCurrentStep(initialStep);
+          return;
+        }
 
         // Extract symbol-related and fxRate fields from flat form data
         const {
@@ -442,8 +598,56 @@ export function MobileActivityForm({ accounts, activity, open, onClose }: Mobile
                 instrumentType: symbolInstrumentType as string | undefined,
                 name: (assetMetadata as { name?: string })?.name,
                 kind: (assetMetadata as { kind?: string })?.kind,
+                providerId: (assetMetadata as { providerId?: string })?.providerId,
+                providerSymbol: (assetMetadata as { providerSymbol?: string })?.providerSymbol,
               })
             : undefined;
+
+        if (id) {
+          const transferOutId =
+            activity?.transferOutId ??
+            (activity?.activityType === ActivityType.TRANSFER_OUT
+              ? activity.id
+              : activity?.counterpartActivityId);
+          const transferInId =
+            activity?.transferInId ??
+            (activity?.activityType === ActivityType.TRANSFER_IN
+              ? activity.id
+              : activity?.counterpartActivityId);
+
+          if (!transferOutId || !transferInId) {
+            throw new Error("Editing an internal securities transfer requires both legs.");
+          }
+
+          const transferOutActivity: ActivityUpdate = {
+            ...sharedFields,
+            id: transferOutId,
+            accountId: submitData.accountId,
+            activityType: ActivityType.TRANSFER_OUT,
+            currency: fromAccount?.currency,
+            asset: assetInput,
+          } as ActivityUpdate;
+
+          const transferInActivity: ActivityUpdate = {
+            ...sharedFields,
+            id: transferInId,
+            accountId: _toAccountId,
+            activityType: ActivityType.TRANSFER_IN,
+            currency: toAccount?.currency,
+            asset: assetInput,
+            fxRate: fxRate as ActivityUpdate["fxRate"],
+          } as ActivityUpdate;
+
+          await saveActivitiesMutation.mutateAsync({
+            updates: [transferOutActivity, transferInActivity],
+          });
+
+          form.reset(defaultValues);
+          setCurrentStep(initialStep);
+          return;
+        }
+
+        const sourceGroupId = generateId("wf-transfer");
 
         const transferOutActivity: ActivityCreate = {
           ...sharedFields,
@@ -469,7 +673,7 @@ export function MobileActivityForm({ accounts, activity, open, onClose }: Mobile
         });
 
         form.reset(defaultValues);
-        setCurrentStep(1);
+        setCurrentStep(initialStep);
         return;
       }
 
@@ -517,7 +721,7 @@ export function MobileActivityForm({ accounts, activity, open, onClose }: Mobile
 
       // Reset form and step after successful submission
       form.reset(defaultValues);
-      setCurrentStep(1);
+      setCurrentStep(initialStep);
     } catch (error) {
       toast.error("Failed to save activity", { description: extractErrorMessage(error) });
       logger.error(
@@ -560,6 +764,17 @@ export function MobileActivityForm({ accounts, activity, open, onClose }: Mobile
           return [...baseFields, "assetId", "quantity", "unitPrice", "fee"];
         }
         if (CASH_AMOUNT_ACTIVITY_TYPES.includes(activityType ?? "")) {
+          if (
+            TRANSFER_ACTIVITY_TYPES.includes(activityType ?? "") &&
+            form.getValues("transferMode" as any) === "cash" &&
+            form.getValues("isExternal" as any) !== true
+          ) {
+            const sourceCurrency = form.getValues("sourceCurrency" as any);
+            const destinationCurrency = form.getValues("destinationCurrency" as any);
+            return sourceCurrency && destinationCurrency && sourceCurrency !== destinationCurrency
+              ? [...baseFields, "toAccountId", "sourceAmount", "destinationAmount", "fxRate"]
+              : [...baseFields, "toAccountId", "sourceAmount"];
+          }
           return [...baseFields, "amount", "fee"];
         }
         if (INCOME_ACTIVITY_TYPES.includes(activityType ?? "")) {
@@ -587,7 +802,7 @@ export function MobileActivityForm({ accounts, activity, open, onClose }: Mobile
         <SheetHeader className="border-b px-6 py-4">
           <div className="flex flex-col items-center space-y-2">
             <SheetTitle>{activity?.id ? "Update Activity" : "Add Activity"}</SheetTitle>
-            {!activity?.id && (
+            {!activity?.id && !startOnDetails && (
               <div className="flex gap-1.5">
                 {[1, 2].map((step) => (
                   <div
@@ -613,7 +828,7 @@ export function MobileActivityForm({ accounts, activity, open, onClose }: Mobile
               <form onSubmit={handleValidatedSubmit} className="flex h-full flex-col">
                 <MobileActivitySteps
                   currentStep={currentStep}
-                  accounts={accounts}
+                  accounts={effectiveAccounts}
                   isEditing={!!activity?.id}
                 />
               </form>
@@ -623,7 +838,7 @@ export function MobileActivityForm({ accounts, activity, open, onClose }: Mobile
 
         <SheetFooter className="mt-auto border-t px-6 py-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
           <div className="flex w-full gap-3">
-            {currentStep > 1 && !activity?.id && (
+            {currentStep > 1 && !activity?.id && !startOnDetails && (
               <Button
                 type="button"
                 variant="outline"

@@ -4,6 +4,7 @@ import {
   linkTransferActivities,
   logger,
   saveActivities,
+  saveInternalTransferPair,
   unlinkTransferActivities,
   updateActivity,
 } from "@/adapters";
@@ -15,7 +16,11 @@ import {
   ActivityCreate,
   ActivityDetails,
   ActivityUpdate,
+  InternalTransferPairRequest,
+  InternalTransferPairResponse,
 } from "@/lib/types";
+import { isSecuritiesTransfer } from "@/lib/activity-utils";
+import { ActivityType, InstrumentType } from "@/lib/constants";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { NewActivityFormValues } from "../components/forms/schemas";
@@ -43,7 +48,13 @@ export function useActivityMutations(
     exchangeMic?: string;
     quoteMode?: string;
     assetKind?: string;
-    assetMetadata?: { name?: string; kind?: string; exchangeMic?: string };
+    assetMetadata?: {
+      name?: string;
+      kind?: string;
+      exchangeMic?: string;
+      providerId?: string | null;
+      providerSymbol?: string | null;
+    };
     symbolQuoteCcy?: string;
     symbolInstrumentType?: string;
     includeId: boolean;
@@ -70,6 +81,8 @@ export function useActivityMutations(
       quoteMode: normalizedAssetId ? quoteMode : undefined,
       quoteCcy: normalizedAssetId ? symbolQuoteCcy : undefined,
       instrumentType: normalizedAssetId ? normalizedInstrumentType : undefined,
+      providerId: normalizedAssetId ? assetMetadata?.providerId : undefined,
+      providerSymbol: normalizedAssetId ? assetMetadata?.providerSymbol : undefined,
     });
   };
 
@@ -110,12 +123,22 @@ export function useActivityMutations(
         isExternal: _isExternal,
         direction: _direction,
         toAccountId: _toAccountId,
+        sourceAmount: _sourceAmount,
+        destinationAmount: _destinationAmount,
+        sourceCurrency: _sourceCurrency,
+        destinationCurrency: _destinationCurrency,
         ...rest
       } = data as NewActivityFormValues & {
         assetId?: string;
         exchangeMic?: string;
         metadata?: Record<string, unknown>;
-        assetMetadata?: { name?: string; kind?: string; exchangeMic?: string };
+        assetMetadata?: {
+          name?: string;
+          kind?: string;
+          exchangeMic?: string;
+          providerId?: string | null;
+          providerSymbol?: string | null;
+        };
         existingAssetId?: string;
         quoteMode?: string;
         assetKind?: string;
@@ -125,6 +148,10 @@ export function useActivityMutations(
         isExternal?: boolean;
         direction?: string;
         toAccountId?: string;
+        sourceAmount?: number;
+        destinationAmount?: number;
+        sourceCurrency?: string;
+        destinationCurrency?: string;
       };
       const quantity = "quantity" in rest ? rest.quantity : undefined;
       const unitPrice = "unitPrice" in rest ? rest.unitPrice : undefined;
@@ -178,6 +205,10 @@ export function useActivityMutations(
         isExternal: _isExternal2,
         direction: _direction2,
         toAccountId: _toAccountId2,
+        sourceAmount: _sourceAmount2,
+        destinationAmount: _destinationAmount2,
+        sourceCurrency: _sourceCurrency2,
+        destinationCurrency: _destinationCurrency2,
         ...rest
       } = data as NewActivityFormValues & {
         id: string;
@@ -185,7 +216,13 @@ export function useActivityMutations(
         currentAssetId?: string;
         exchangeMic?: string;
         metadata?: Record<string, unknown>;
-        assetMetadata?: { name?: string; kind?: string; exchangeMic?: string };
+        assetMetadata?: {
+          name?: string;
+          kind?: string;
+          exchangeMic?: string;
+          providerId?: string | null;
+          providerSymbol?: string | null;
+        };
         existingAssetId?: string;
         quoteMode?: string;
         assetKind?: string;
@@ -195,6 +232,10 @@ export function useActivityMutations(
         isExternal?: boolean;
         direction?: string;
         toAccountId?: string;
+        sourceAmount?: number;
+        destinationAmount?: number;
+        sourceCurrency?: string;
+        destinationCurrency?: string;
       };
       const quantity = "quantity" in rest ? rest.quantity : undefined;
       const unitPrice = "unitPrice" in rest ? rest.unitPrice : undefined;
@@ -295,6 +336,15 @@ export function useActivityMutations(
       assetQuoteMode,
       ...restOfActivityData
     } = activityToDuplicate;
+    const isBuyOrSell =
+      restOfActivityData.activityType === ActivityType.BUY ||
+      restOfActivityData.activityType === ActivityType.SELL;
+    const isBondTrade =
+      isBuyOrSell && activityToDuplicate.instrumentType?.toUpperCase() === InstrumentType.BOND;
+    const shouldCopyAmount =
+      isBondTrade ||
+      (!isBuyOrSell &&
+        !isSecuritiesTransfer(restOfActivityData.activityType, assetSymbol, _assetId));
 
     // For duplicating, use nested asset object
     const createPayload: ActivityCreate = {
@@ -305,7 +355,7 @@ export function useActivityMutations(
       currency: restOfActivityData.currency,
       quantity: restOfActivityData.quantity,
       unitPrice: restOfActivityData.unitPrice,
-      amount: restOfActivityData.amount,
+      amount: shouldCopyAmount ? restOfActivityData.amount : undefined,
       fee: restOfActivityData.fee,
       fxRate: restOfActivityData.fxRate ?? undefined,
       activityDate: date,
@@ -376,12 +426,29 @@ export function useActivityMutations(
     },
   });
 
+  const saveInternalTransferPairMutation = useMutation({
+    mutationFn: async (request: InternalTransferPairRequest) => {
+      return await saveInternalTransferPair(request);
+    },
+    onSuccess: (result: InternalTransferPairResponse) => {
+      queryClient.invalidateQueries();
+      if (onSuccess) onSuccess({ accountId: result.transferOut.accountId });
+    },
+    onError: (error: string) => {
+      logger.error(`Error saving internal transfer pair: ${String(error)}`);
+      toast.error("Failed to save transfer", {
+        description: String(error),
+      });
+    },
+  });
+
   return {
     addActivityMutation,
     updateActivityMutation,
     deleteActivityMutation,
     duplicateActivityMutation,
     saveActivitiesMutation,
+    saveInternalTransferPairMutation,
     linkTransferActivitiesMutation,
     unlinkTransferActivitiesMutation,
   };

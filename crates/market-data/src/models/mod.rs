@@ -8,8 +8,10 @@
 //! - `profile` - Asset profile data (AssetProfile)
 //! - `coverage` - Provider market coverage restrictions (Coverage)
 //! - `search` - Search result data (SearchResult)
+//! - `dividend` - Dividend event data (DividendEvent)
 
 mod coverage;
+mod dividend;
 mod instrument;
 mod profile;
 mod provider_params;
@@ -18,10 +20,11 @@ mod search;
 mod types;
 
 pub use coverage::Coverage;
+pub use dividend::DividendEvent;
 pub use instrument::{AssetKind, InstrumentId, InstrumentKind};
 pub use profile::AssetProfile;
 pub use provider_params::{ProviderInstrument, ProviderOverrides};
-pub use quote::{BondQuoteMetadata, Quote, QuoteContext};
+pub use quote::{BondQuoteMetadata, Quote, QuoteContext, QuoteIdentifiers};
 pub use search::SearchResult;
 pub use types::{Currency, Mic, ProviderId, ProviderSymbol};
 

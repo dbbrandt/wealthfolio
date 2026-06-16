@@ -1,7 +1,20 @@
 export const QueryKeys = {
+  // Portfolios (saved reporting scopes)
+  PORTFOLIOS: "portfolios",
+
   // Account related keys
   ACCOUNTS: "accounts",
   ACCOUNTS_SUMMARY: "accounts_summary",
+
+  // Spending module keys
+  SPENDING_SETTINGS: "spending_settings",
+  SPENDING_TRANSACTIONS: "spending_transactions",
+  SPENDING_RULES: "spending_rules",
+  SPENDING_EVENTS: "spending_events",
+  SPENDING_EVENT_TYPES: "spending_event_types",
+  SPENDING_BUDGET: "spending_budget",
+  SPENDING_REPORT: "spending_report",
+  SPENDING_INSIGHT: "spending_insight",
 
   // Activity related keys
   ACTIVITY_DATA: "activity-data",
@@ -11,6 +24,7 @@ export const QueryKeys = {
   HOLDINGS: "holdings",
   HOLDING: "holding",
   ASSET_HOLDINGS: "assetHoldings",
+  ASSET_LOTS: "assetLots",
   PORTFOLIO_ALLOCATIONS: "portfolioAllocations",
   HOLDINGS_BY_ALLOCATION: "holdingsByAllocation",
   INCOME_SUMMARY: "incomeSummary",
@@ -33,6 +47,7 @@ export const QueryKeys = {
 
   // Settings related keys
   SETTINGS: "settings",
+  DATABASE_BACKUPS: "databaseBackups",
   EXCHANGE_RATES: "exchangeRates",
 
   // New keys for exchange rates
@@ -53,7 +68,7 @@ export const QueryKeys = {
 
   HISTORY_VALUATION: "historyValuation",
   // Helper function to create account-specific keys
-  valuationHistory: (id: string) => [QueryKeys.HISTORY_VALUATION, id],
+  valuationHistory: (scope: unknown) => [QueryKeys.HISTORY_VALUATION, scope],
 
   // Account simple performance
   ACCOUNTS_SIMPLE_PERFORMANCE: "accountsSimplePerformance",
@@ -81,6 +96,7 @@ export const QueryKeys = {
 
   transactions: "transactions",
   latestValuations: "latest-valuations",
+  CURRENT_VALUATION: "current-valuation",
 
   // Market Data
   symbolSearch: "symbol-search",
@@ -125,6 +141,18 @@ export const QueryKeys = {
   ASSET_TAXONOMY_ASSIGNMENTS: "assetTaxonomyAssignments",
   assetTaxonomyAssignments: (assetId: string) => [QueryKeys.ASSET_TAXONOMY_ASSIGNMENTS, assetId],
   ASSET_CLASSIFICATIONS: "asset-classifications",
+
+  // Allocation Targets
+  ALLOCATION_TARGETS: "allocationTargets",
+  ALLOCATION_TARGET_WEIGHTS: "allocationTargetWeights",
+  ALLOCATION_TARGET_DRIFT: "allocationTargetDrift",
+  allocationTargetWeights: (targetId: string) => [QueryKeys.ALLOCATION_TARGET_WEIGHTS, targetId],
+  allocationTargetDrift: (targetId: string, scope: unknown, includeHoldings = false) => [
+    QueryKeys.ALLOCATION_TARGET_DRIFT,
+    targetId,
+    scope,
+    includeHoldings,
+  ],
 
   // Health Center
   HEALTH_STATUS: "healthStatus",

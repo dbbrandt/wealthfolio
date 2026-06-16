@@ -2,23 +2,27 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { calculatePerformanceSummary } from "@/adapters";
+import { calculatePerformanceSummaries } from "@/adapters";
 import { useAccounts } from "@/hooks/use-accounts";
+import { useCurrentAccountValuations } from "@/hooks/use-current-account-valuations";
 import { useLatestValuations } from "@/hooks/use-latest-valuations";
 import { useSettingsContext } from "@/lib/settings-provider";
 import type {
   Account,
   AccountValuation,
-  PerformanceMetrics,
+  CurrentAccountValuation,
+  PerformanceResult,
   Settings,
   TrackingMode,
 } from "@/lib/types";
 import { AccountType } from "@/lib/types";
-import { useQueries } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { AccountsSummary } from "./accounts-summary";
 
 vi.mock("@/adapters", () => ({
-  calculatePerformanceSummary: vi.fn(),
+  calculatePerformanceSummaries: vi.fn(),
+  performanceSummaryScopeKey: (accountIds: string[]) =>
+    `accounts:${[...new Set(accountIds)].sort().join(",")}`,
 }));
 
 vi.mock("@/hooks/use-accounts", () => ({
@@ -29,12 +33,16 @@ vi.mock("@/hooks/use-latest-valuations", () => ({
   useLatestValuations: vi.fn(),
 }));
 
+vi.mock("@/hooks/use-current-account-valuations", () => ({
+  useCurrentAccountValuations: vi.fn(),
+}));
+
 vi.mock("@/lib/settings-provider", () => ({
   useSettingsContext: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-query", () => ({
-  useQueries: vi.fn(),
+  useQuery: vi.fn(),
 }));
 
 vi.mock("@wealthfolio/ui", () => ({
@@ -80,16 +88,18 @@ vi.mock("@wealthfolio/ui/components/ui/tooltip", () => ({
   TooltipContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
-const mockCalculatePerformanceSummary = vi.mocked(calculatePerformanceSummary);
+const mockCalculatePerformanceSummaries = vi.mocked(calculatePerformanceSummaries);
 const mockUseAccounts = vi.mocked(useAccounts);
 const mockUseLatestValuations = vi.mocked(useLatestValuations);
+const mockUseCurrentAccountValuations = vi.mocked(useCurrentAccountValuations);
 const mockUseSettingsContext = vi.mocked(useSettingsContext);
-const mockUseQueries = vi.mocked(useQueries);
+const mockUseQuery = vi.mocked(useQuery);
 
 const mockSettings: Settings = {
   theme: "light",
   font: "font-sans",
   baseCurrency: "USD",
+  defaultReturnMetric: "twr",
   timezone: "America/Chicago",
   instanceId: "test-instance",
   onboardingCompleted: true,
@@ -136,46 +146,106 @@ function createValuation(overrides: Partial<AccountValuation>): AccountValuation
     totalValue: overrides.totalValue ?? 0,
     costBasis: overrides.costBasis ?? 0,
     netContribution: overrides.netContribution ?? 0,
+    cashBalanceBase: overrides.cashBalanceBase ?? overrides.cashBalance ?? 0,
+    investmentMarketValueBase:
+      overrides.investmentMarketValueBase ?? overrides.investmentMarketValue ?? 0,
+    totalValueBase: overrides.totalValueBase ?? overrides.totalValue ?? 0,
+    costBasisBase: overrides.costBasisBase ?? overrides.costBasis ?? 0,
+    netContributionBase: overrides.netContributionBase ?? overrides.netContribution ?? 0,
+    externalInflowBase: overrides.externalInflowBase ?? 0,
+    externalOutflowBase: overrides.externalOutflowBase ?? 0,
+    externalFlowSource: overrides.externalFlowSource ?? "UNKNOWN",
+    performanceEligibleValueBase:
+      overrides.performanceEligibleValueBase ?? overrides.totalValue ?? 0,
     calculatedAt: overrides.calculatedAt ?? "2026-03-17T00:00:00Z",
   };
 }
 
-function createPerformanceMetrics(overrides: Partial<PerformanceMetrics> = {}): PerformanceMetrics {
+function createCurrentValuation(
+  overrides: Partial<CurrentAccountValuation>,
+): CurrentAccountValuation {
   return {
-    id: overrides.id ?? "performance-1",
-    returns: overrides.returns ?? [],
-    periodStartDate: overrides.periodStartDate ?? null,
-    periodEndDate: overrides.periodEndDate ?? null,
-    currency: overrides.currency ?? "USD",
-    periodGain: overrides.periodGain ?? 0,
-    periodReturn: overrides.periodReturn ?? 0,
-    cumulativeTwr: overrides.cumulativeTwr ?? null,
-    gainLossAmount: overrides.gainLossAmount ?? null,
-    annualizedTwr: overrides.annualizedTwr ?? null,
-    simpleReturn: overrides.simpleReturn ?? 0,
-    annualizedSimpleReturn: overrides.annualizedSimpleReturn ?? 0,
-    cumulativeMwr: overrides.cumulativeMwr ?? null,
-    annualizedMwr: overrides.annualizedMwr ?? null,
-    volatility: overrides.volatility ?? 0,
-    maxDrawdown: overrides.maxDrawdown ?? 0,
+    accountId: overrides.accountId ?? "account-1",
+    accountCurrency: overrides.accountCurrency ?? "USD",
+    baseCurrency: overrides.baseCurrency ?? "USD",
+    cashBalance: overrides.cashBalance ?? 0,
+    investmentMarketValue: overrides.investmentMarketValue ?? 0,
+    totalValue: overrides.totalValue ?? 0,
+    cashBalanceBase: overrides.cashBalanceBase ?? overrides.cashBalance ?? 0,
+    investmentMarketValueBase:
+      overrides.investmentMarketValueBase ?? overrides.investmentMarketValue ?? 0,
+    totalValueBase: overrides.totalValueBase ?? overrides.totalValue ?? 0,
+    sourceDataAsOf: overrides.sourceDataAsOf ?? "2026-03-17T11:59:00Z",
+    calculatedAt: overrides.calculatedAt ?? "2026-03-17T12:00:00Z",
+    warnings: overrides.warnings ?? [],
+  };
+}
+
+interface PerformanceFixture {
+  pnl: number | null;
+  returnValue: number | null;
+  dataQuality?: PerformanceResult["dataQuality"];
+}
+
+function createPerformanceResult(
+  overrides: Partial<PerformanceResult> & Partial<PerformanceFixture> = {},
+): PerformanceResult {
+  const returnValue = overrides.returnValue ?? null;
+  const pnl = overrides.pnl ?? null;
+
+  return {
+    scope: overrides.scope ?? { id: "performance-1", currency: "USD" },
+    period: overrides.period ?? { startDate: null, endDate: null },
+    mode: overrides.mode ?? "timeWeighted",
+    returns: overrides.returns ?? {
+      twr: returnValue,
+      annualizedTwr: null,
+      irr: null,
+      annualizedIrr: null,
+      valueReturn: returnValue,
+    },
+    attribution: overrides.attribution ?? {
+      contributions: 0,
+      distributions: 0,
+      income: 0,
+      realizedPnl: 0,
+      unrealizedPnlChange: pnl ?? 0,
+      fxEffect: 0,
+      fees: 0,
+      taxes: 0,
+      residual: 0,
+    },
+    risk: overrides.risk ?? {
+      volatility: null,
+      maxDrawdown: null,
+      peakDate: null,
+      troughDate: null,
+      recoveryDate: null,
+      drawdownDurationDays: null,
+    },
+    dataQuality: overrides.dataQuality ?? {
+      status: "ok",
+      warnings: [],
+      notApplicableReasons: [],
+    },
+    series: overrides.series ?? [],
     isHoldingsMode: overrides.isHoldingsMode,
+    isMixedTrackingMode: overrides.isMixedTrackingMode,
   };
 }
 
 function renderAccountsSummary({
   accounts,
   valuations,
+  currentValuations,
   performanceByAccountId = {},
+  performanceByScopeKey = {},
 }: {
   accounts: Account[];
   valuations: AccountValuation[];
-  performanceByAccountId?: Record<
-    string,
-    {
-      periodGain: number | null;
-      periodReturn: number | null;
-    }
-  >;
+  currentValuations?: CurrentAccountValuation[];
+  performanceByAccountId?: Record<string, PerformanceFixture>;
+  performanceByScopeKey?: Record<string, PerformanceFixture>;
 }) {
   mockUseSettingsContext.mockReturnValue({
     settings: mockSettings,
@@ -202,17 +272,71 @@ function renderAccountsSummary({
     error: null,
   });
 
-  mockUseQueries.mockImplementation(({ queries }: { queries: { queryKey: unknown[] }[] }) =>
-    queries.map((query) => {
-      const accountId = String(query.queryKey[2]);
-      return {
-        isLoading: false,
-        data: performanceByAccountId[accountId],
-      };
+  const defaultCurrentValuations = valuations.map((valuation) =>
+    createCurrentValuation({
+      accountId: valuation.accountId,
+      accountCurrency: valuation.accountCurrency,
+      baseCurrency: valuation.baseCurrency,
+      cashBalance: valuation.cashBalance,
+      investmentMarketValue: valuation.investmentMarketValue,
+      totalValue: valuation.totalValue,
+      cashBalanceBase: valuation.cashBalanceBase,
+      investmentMarketValueBase: valuation.investmentMarketValueBase,
+      totalValueBase: valuation.totalValueBase,
+      calculatedAt: valuation.calculatedAt,
     }),
   );
 
-  mockCalculatePerformanceSummary.mockResolvedValue(createPerformanceMetrics());
+  mockUseCurrentAccountValuations.mockReturnValue({
+    currentAccountValuations: currentValuations ?? defaultCurrentValuations,
+    isLoading: false,
+    isFetching: false,
+    error: null,
+  });
+
+  const performanceSummaries: Record<string, PerformanceResult> = {};
+  for (const account of accounts) {
+    const performance = performanceByAccountId[account.id] ?? {
+      pnl: null,
+      returnValue: null,
+    };
+    performanceSummaries[`accounts:${account.id}`] = createPerformanceResult({
+      scope: { id: `accounts:${account.id}`, currency: "USD" },
+      pnl: performance.pnl,
+      returnValue: performance.returnValue,
+      dataQuality: performance.dataQuality,
+    });
+  }
+
+  const groups = new Map<string, Account[]>();
+  for (const account of accounts) {
+    const groupName = account.group ?? "Uncategorized";
+    if (groupName === "Uncategorized") continue;
+    groups.set(groupName, [...(groups.get(groupName) ?? []), account]);
+  }
+  for (const groupAccounts of groups.values()) {
+    if (groupAccounts.length < 2) continue;
+    const ids = groupAccounts.map((account) => account.id);
+    const key = `accounts:${[...ids].sort().join(",")}`;
+    const explicitGroupPerformance = performanceByScopeKey[key];
+    const gain = ids.reduce((sum, id) => sum + (performanceByAccountId[id]?.pnl ?? 0), 0);
+    const firstReturn = ids
+      .map((id) => performanceByAccountId[id]?.returnValue)
+      .find((value): value is number => value !== null && value !== undefined);
+    performanceSummaries[key] = createPerformanceResult({
+      scope: { id: key, currency: "USD" },
+      pnl: explicitGroupPerformance?.pnl ?? gain,
+      returnValue: explicitGroupPerformance?.returnValue ?? firstReturn ?? null,
+      dataQuality: explicitGroupPerformance?.dataQuality,
+    });
+  }
+
+  mockUseQuery.mockReturnValue({
+    isLoading: false,
+    data: performanceSummaries,
+  } as unknown as ReturnType<typeof useQuery>);
+
+  mockCalculatePerformanceSummaries.mockResolvedValue(performanceSummaries);
 
   return render(
     <MemoryRouter>
@@ -253,15 +377,24 @@ describe("AccountsSummary", () => {
       ],
       performanceByAccountId: {
         "a-positive": {
-          periodGain: 10,
-          periodReturn: 0.1,
+          pnl: 10,
+          returnValue: 0.1,
         },
         "a-zero": {
-          periodGain: 0,
-          periodReturn: 0,
+          pnl: 0,
+          returnValue: 0,
+        },
+      },
+      performanceByScopeKey: {
+        "accounts:a-missing,a-positive,a-zero": {
+          pnl: 17,
+          returnValue: 0.07,
         },
       },
     });
+
+    expect(screen.getByText("gain-amount:USD:17")).toBeInTheDocument();
+    expect(screen.getByText("gain-percent:0.07")).toBeInTheDocument();
 
     await user.click(screen.getByText("Brokerage"));
 
@@ -287,6 +420,38 @@ describe("AccountsSummary", () => {
     ).toHaveTextContent("-");
   });
 
+  it("uses current account valuations for displayed account values instead of stale daily valuations", () => {
+    renderAccountsSummary({
+      accounts: [createAccount({ id: "live-account", name: "Live Account" })],
+      valuations: [
+        createValuation({
+          accountId: "live-account",
+          totalValue: 100,
+          totalValueBase: 100,
+        }),
+      ],
+      currentValuations: [
+        createCurrentValuation({
+          accountId: "live-account",
+          totalValue: 125,
+          totalValueBase: 125,
+        }),
+      ],
+      performanceByAccountId: {
+        "live-account": {
+          pnl: 25,
+          returnValue: 0.25,
+        },
+      },
+    });
+
+    const row = screen.getByText("Live Account").closest("a");
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLElement).getByText("value:USD:125")).toBeInTheDocument();
+    expect(within(row as HTMLElement).queryByText("value:USD:100")).not.toBeInTheDocument();
+    expect(within(row as HTMLElement).getByText("gain-percent:0.25")).toBeInTheDocument();
+  });
+
   it("keeps the group header behavior unchanged when grouped totals have zero gain", async () => {
     const user = userEvent.setup();
 
@@ -309,12 +474,12 @@ describe("AccountsSummary", () => {
       ],
       performanceByAccountId: {
         "a-one": {
-          periodGain: 0,
-          periodReturn: 0,
+          pnl: 0,
+          returnValue: 0,
         },
         "a-two": {
-          periodGain: 0,
-          periodReturn: 0,
+          pnl: 0,
+          returnValue: 0,
         },
       },
     });
@@ -346,12 +511,12 @@ describe("AccountsSummary", () => {
       ],
       performanceByAccountId: {
         "a-bad": {
-          periodGain: 25,
-          periodReturn: null,
+          pnl: 25,
+          returnValue: null,
         },
         "a-good": {
-          periodGain: 50,
-          periodReturn: 0.5,
+          pnl: 50,
+          returnValue: 0.5,
         },
       },
     });
@@ -364,5 +529,98 @@ describe("AccountsSummary", () => {
     expect(within(badRow as HTMLElement).queryByText("gain-amount:USD:25")).not.toBeInTheDocument();
 
     expect(within(badRow as HTMLElement).getByText(/return % unavailable/i)).toBeInTheDocument();
+  });
+
+  it("uses holdings-mode copy when a holdings account has unavailable return percent", () => {
+    renderAccountsSummary({
+      accounts: [
+        createAccount({
+          id: "holdings-account",
+          name: "Holdings Account",
+          trackingMode: "HOLDINGS",
+        }),
+      ],
+      valuations: [
+        createValuation({
+          accountId: "holdings-account",
+          totalValue: 125,
+        }),
+      ],
+      performanceByAccountId: {
+        "holdings-account": {
+          pnl: 25,
+          returnValue: null,
+        },
+      },
+    });
+
+    const row = screen.getByText("Holdings Account").closest("a");
+    expect(row).not.toBeNull();
+    expect(
+      within(row as HTMLElement).getByText(
+        "Return % unavailable - missing cost basis or starting holdings value.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(row as HTMLElement).queryByText(/activity history may be inconsistent/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not flag normal transaction-mode not-applicable details as dashboard warnings", () => {
+    renderAccountsSummary({
+      accounts: [createAccount({ id: "td-invest", name: "TD Invest" })],
+      valuations: [
+        createValuation({
+          accountId: "td-invest",
+          totalValue: 29548.37,
+        }),
+      ],
+      performanceByAccountId: {
+        "td-invest": {
+          pnl: 2522.37,
+          returnValue: 0.0933,
+          dataQuality: {
+            status: "ok",
+            warnings: [],
+            notApplicableReasons: [
+              "Value return unavailable for transaction-mode scopes; use TWR or IRR.",
+            ],
+          },
+        },
+      },
+    });
+
+    expect(screen.getByText("TD Invest")).toBeInTheDocument();
+    expect(screen.getByText("gain-percent:0.0933")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/value return unavailable for transaction-mode/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not show backend performance warnings on dashboard rows", () => {
+    renderAccountsSummary({
+      accounts: [createAccount({ id: "business", name: "Business Investment" })],
+      valuations: [
+        createValuation({
+          accountId: "business",
+          totalValue: 71438.32,
+        }),
+      ],
+      performanceByAccountId: {
+        business: {
+          pnl: -17013.7,
+          returnValue: -0.1923,
+          dataQuality: {
+            status: "partial",
+            warnings: ["Backend performance warning that belongs outside dashboard rows."],
+            notApplicableReasons: [],
+          },
+        },
+      },
+    });
+
+    expect(screen.getByText("Business Investment")).toBeInTheDocument();
+    expect(screen.getByText("gain-percent:-0.1923")).toBeInTheDocument();
+    expect(screen.queryByText(/backend performance warning/i)).not.toBeInTheDocument();
   });
 });

@@ -4,7 +4,7 @@ import { useAccountsSimplePerformance } from "@/hooks/use-accounts-simple-perfor
 import { useDrillDownState } from "@/hooks/use-drill-down-state";
 import { QueryKeys } from "@/lib/query-keys";
 import { useSettingsContext } from "@/lib/settings-provider";
-import type { Account } from "@/lib/types";
+import type { Account, AccountValueSource } from "@/lib/types";
 import { useQuery } from "@tanstack/react-query";
 import {
   Card,
@@ -19,6 +19,8 @@ import { useMemo, useState } from "react";
 
 interface DrillableAccountChartProps {
   isLoading?: boolean;
+  accountIds?: string[];
+  accountValuations?: AccountValueSource[];
   onAccountClick?: (accountId: string, accountName: string) => void;
 }
 
@@ -29,6 +31,8 @@ interface DrillableAccountChartProps {
  */
 export function DrillableAccountChart({
   isLoading: isLoadingProp,
+  accountIds,
+  accountValuations,
   onAccountClick,
 }: DrillableAccountChartProps) {
   const { settings } = useSettingsContext();
@@ -36,42 +40,47 @@ export function DrillableAccountChart({
   const [activeIndex, setActiveIndex] = useState(0);
   const { path, drillDown, navigateTo, isAtRoot } = useDrillDownState();
 
-  const { data: accounts = [], isLoading: isLoadingAccounts } = useQuery<Account[], Error>({
+  const { data: allAccounts = [], isLoading: isLoadingAccounts } = useQuery<Account[], Error>({
     queryKey: [QueryKeys.ACCOUNTS],
     queryFn: () => getAccounts(),
   });
 
-  const { data: performanceData, isLoading: isLoadingPerformance } =
-    useAccountsSimplePerformance(accounts);
+  const accounts = accountIds ? allAccounts.filter((a) => accountIds.includes(a.id)) : allAccounts;
 
-  const isLoading = isLoadingProp || isLoadingAccounts || isLoadingPerformance;
+  const { data: performanceData, isLoading: isLoadingPerformance } = useAccountsSimplePerformance(
+    accounts,
+    { enabled: accountValuations === undefined },
+  );
+
+  const isLoading =
+    isLoadingProp || isLoadingAccounts || (accountValuations === undefined && isLoadingPerformance);
 
   // Build account data with group info
   const accountsWithValues = useMemo(() => {
-    if (!accounts?.length || !performanceData) return [];
+    const valuationData: AccountValueSource[] | undefined = accountValuations ?? performanceData;
+    if (!accounts?.length || !valuationData) return [];
 
     return accounts
       .map((account) => {
-        const perf = performanceData.find((p) => p.accountId === account.id);
-        if (!perf) return null;
+        const valuation = valuationData.find((p) => p.accountId === account.id);
+        if (!valuation) return null;
 
-        const valueAcct = Number(perf.totalValue) || 0;
-        if (valueAcct <= 0) return null;
-
-        const fxRate = Number(perf.fxRateToBase) || 1;
-        const valueBase = valueAcct * fxRate;
-        const currency = perf.baseCurrency || account.currency || baseCurrency;
+        const valueBase =
+          valuation.totalValueBase != null
+            ? Number(valuation.totalValueBase) || 0
+            : (Number(valuation.totalValue) || 0) * (Number(valuation.fxRateToBase) || 1);
+        if (valueBase <= 0) return null;
 
         return {
           id: account.id,
           name: account.name,
           group: account.group || account.name, // Use name as group if no group
           value: valueBase,
-          currency,
+          currency: baseCurrency,
         };
       })
       .filter((a): a is NonNullable<typeof a> => a !== null);
-  }, [accounts, performanceData, baseCurrency]);
+  }, [accounts, accountValuations, performanceData, baseCurrency]);
 
   // Root level: grouped by account group
   const groupedData = useMemo(() => {
@@ -155,10 +164,10 @@ export function DrillableAccountChart({
   if (isLoading) {
     return (
       <Card className="overflow-hidden backdrop-blur-sm">
-        <CardHeader>
-          <Skeleton className="h-5 w-[140px]" />
+        <CardHeader className="px-5 pb-1 pt-5">
+          <Skeleton className="h-4 w-[120px]" />
         </CardHeader>
-        <CardContent className="p-6">
+        <CardContent className="px-5 pb-5 pt-0">
           <div className="flex h-[160px] items-center justify-center">
             <Skeleton className="h-[120px] w-[120px] rounded-full" />
           </div>
@@ -169,9 +178,9 @@ export function DrillableAccountChart({
 
   return (
     <Card className="overflow-hidden backdrop-blur-sm">
-      <CardHeader>
+      <CardHeader className="px-5 pb-1 pt-5">
         {isAtRoot ? (
-          <CardTitle className="text-muted-foreground text-sm font-medium uppercase tracking-wider">
+          <CardTitle className="text-muted-foreground text-[12px] font-semibold uppercase tracking-[0.18em]">
             Accounts
           </CardTitle>
         ) : (
@@ -182,7 +191,7 @@ export function DrillableAccountChart({
           />
         )}
       </CardHeader>
-      <CardContent className="pt-0">
+      <CardContent className="px-5 pb-5 pt-0">
         {data.length > 0 ? (
           <DonutChart
             data={data}
