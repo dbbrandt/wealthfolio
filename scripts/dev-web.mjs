@@ -26,8 +26,11 @@ function loadDotenvFile(file) {
   }
 }
 
-// Load .env.web if present
+// Load .env first (shared config like CONNECT_*), then .env.web for web-only overrides.
+// loadDotenvFile only sets keys that are not already in process.env, so later loads
+// don't clobber earlier ones — but we want .env.web to win, so it's loaded second.
 loadDotenvFile(".env.web");
+loadDotenvFile(".env");
 
 // Set build target for web mode
 process.env.BUILD_TARGET = "web";
