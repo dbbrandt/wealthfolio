@@ -1,4 +1,20 @@
 {
+  "permissions": {
+    "allow": [
+      "mcp__prompt-logger__log_prompt",
+      "mcp__prompt-logger__log_implementation_summary",
+      "mcp__n8n__get_workflow_details",
+      "mcp__n8n__validate_workflow",
+      "mcp__n8n__get_sdk_reference",
+      "mcp__n8n__get_node_types",
+      "mcp__n8n__search_nodes",
+      "mcp__n8n__search_workflows",
+      "Bash(git fetch *)",
+      "Bash(git diff *)",
+      "Bash(git show *)",
+      "Bash(git log *)"
+    ]
+  },
   "hooks": {
     "PostToolUse": [
       {
