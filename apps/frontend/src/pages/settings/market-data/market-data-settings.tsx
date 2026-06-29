@@ -46,7 +46,6 @@ interface ProviderSettingsProps {
   priorityValue: number;
   onUpdate: (settings: { priority?: number; enabled?: boolean }) => void;
   onPriorityChange: (value: string) => void;
-  onPrioritySave: () => void;
   isLast?: boolean;
 }
 
@@ -55,7 +54,6 @@ function ProviderSettings({
   priorityValue,
   onUpdate,
   onPriorityChange,
-  onPrioritySave,
   isLast = false,
 }: ProviderSettingsProps) {
   const queryClient = useQueryClient();
@@ -390,7 +388,7 @@ function ProviderSettings({
                         onClick={() => {
                           const newVal = Math.max(1, (priorityValue ?? 1) - 1);
                           onPriorityChange(String(newVal));
-                          onPrioritySave();
+                          onUpdate({ priority: newVal });
                         }}
                       >
                         <Icons.MinusCircle className="h-3 w-3" />
@@ -405,7 +403,7 @@ function ProviderSettings({
                         onClick={() => {
                           const newVal = (priorityValue ?? 1) + 1;
                           onPriorityChange(String(newVal));
-                          onPrioritySave();
+                          onUpdate({ priority: newVal });
                         }}
                       >
                         <Icons.PlusCircle className="h-3 w-3" />
@@ -626,14 +624,6 @@ export default function MarketDataSettingsPage() {
     setPriorityInputs((prev) => ({ ...prev, [providerId]: isNaN(numValue) ? 0 : numValue }));
   };
 
-  const handlePrioritySave = (providerId: string) => {
-    const newPriority = priorityInputs[providerId];
-    const provider = providers?.find((p) => p.id === providerId);
-    if (provider && newPriority !== provider.priority) {
-      handleUpdateSetting(providerId, { priority: newPriority });
-    }
-  };
-
   if (isLoading) {
     return (
       <div className="text-foreground space-y-6">
@@ -839,7 +829,6 @@ export default function MarketDataSettingsPage() {
                   priorityValue={priorityInputs[provider.id]}
                   onUpdate={(settings) => handleUpdateSetting(provider.id, settings)}
                   onPriorityChange={(value) => handlePriorityInputChange(provider.id, value)}
-                  onPrioritySave={() => handlePrioritySave(provider.id)}
                   isLast={index === arr.length - 1}
                 />
               ))}
