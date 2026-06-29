@@ -1,8 +1,7 @@
-import { getHoldings } from "@/adapters";
 import { useAccounts } from "@/hooks/use-accounts";
+import { useHoldings } from "@/hooks/use-holdings";
 import { useIsMobileViewport } from "@/hooks/use-platform";
-import { QueryKeys } from "@/lib/query-keys";
-import { Holding, HoldingType } from "@/lib/types";
+import { HoldingType } from "@/lib/types";
 import { AccountType, isLiabilityAccountType } from "@/lib/constants";
 import { canAddHoldings } from "@/lib/activity-restrictions";
 import { HoldingsTable } from "@/pages/holdings/components/holdings-table";
@@ -16,28 +15,29 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@wealthfolio/ui";
-import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 interface AccountHoldingsProps {
   accountId: string;
   showEmptyState?: boolean;
+  showTitle?: boolean;
   onAddHoldings?: () => void;
 }
 
 const AccountHoldings = ({
   accountId,
   showEmptyState = true,
+  showTitle = true,
   onAddHoldings,
 }: AccountHoldingsProps) => {
   const isMobile = useIsMobileViewport();
   const navigate = useNavigate();
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
 
-  const { data: holdings, isLoading } = useQuery<Holding[], Error>({
-    queryKey: [QueryKeys.HOLDINGS, accountId],
-    queryFn: () => getHoldings({ type: "account", accountId }),
+  const { holdings, isLoading } = useHoldings({
+    type: "account",
+    accountId,
   });
 
   const { accounts } = useAccounts();
@@ -201,25 +201,29 @@ const AccountHoldings = ({
     );
   }
 
+  const showHeader = showTitle || (canEditHoldingsDirectly && onAddHoldings);
+
   return (
     <div>
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="text-lg font-bold">Holdings</h3>
-        {canEditHoldingsDirectly && onAddHoldings && (
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" onClick={onAddHoldings}>
-                  <Icons.Pencil className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Update holdings</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        )}
-      </div>
+      {showHeader && (
+        <div className={`flex items-center gap-3 ${showTitle ? "justify-between" : "justify-end"}`}>
+          {showTitle && <h3 className="text-lg font-bold">Holdings</h3>}
+          {canEditHoldingsDirectly && onAddHoldings && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon" onClick={onAddHoldings}>
+                    <Icons.Pencil className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Update holdings</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+        </div>
+      )}
       {isMobile ? (
         <HoldingsTableMobile
           holdings={filteredHoldings ?? []}
@@ -227,7 +231,7 @@ const AccountHoldings = ({
           selectedTypes={selectedTypes}
           setSelectedTypes={setSelectedTypes}
           accountFilter={{ type: "account", accountId: selectedAccount?.id ?? "" }}
-          onAccountScopeChange={() => {}}
+          onAccountScopeChange={() => undefined}
           accounts={[]}
           portfolios={[]}
           showAccountScope={false}

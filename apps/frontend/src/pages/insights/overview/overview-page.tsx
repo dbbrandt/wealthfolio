@@ -132,13 +132,14 @@ export function OverviewPage({
     () => portfolioHoldings.filter((h) => h.holdingType?.toLowerCase() !== "cash"),
     [portfolioHoldings],
   );
-  const availableCash = useMemo(
+  const totalCash = useMemo(
     () =>
       holdings
         .filter((h) => h.holdingType === HoldingType.CASH)
         .reduce((sum, h) => sum + (h.marketValue.base ?? 0), 0),
     [holdings],
   );
+  const availableCash = driftReport?.deployableCash ?? totalCash;
   const rebalanceSourceVersion = `${holdingsUpdatedAt}:${driftUpdatedAt}:${effectiveTarget?.updatedAt ?? ""}`;
 
   const valueStrip = useMemo(
@@ -370,6 +371,7 @@ export function OverviewPage({
             report={driftReport}
             taxonomyId={effectiveTarget?.taxonomyId ?? "asset_classes"}
             targetName={effectiveTarget?.name}
+            target={effectiveTarget}
             onRebalanceClick={() => setWorkspaceView("rebalance")}
           />
         ) : targetLoading ? (
@@ -446,7 +448,6 @@ export function OverviewPage({
             selectedTargetId={effectiveTargetId}
             onTargetChange={requestTargetChange}
             driftReport={driftReport}
-            driftBandBps={effectiveTarget?.driftBandBps ?? 0}
             isLoading={driftLoading && !driftReport}
             onCreateTarget={handleCreateTarget}
             onViewDetails={() => setWorkspaceView("details")}

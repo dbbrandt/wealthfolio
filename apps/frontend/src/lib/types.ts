@@ -365,7 +365,7 @@ export interface TransferMatchCandidateRequest {
 
 export interface TransferMatchCandidate {
   activity: Activity;
-  matchKind: "cash" | "security";
+  matchKind: "cash" | "security" | "cash_fx_conversion";
   confidence: "high" | "medium" | "low";
   score: number;
   reasons: string[];
@@ -615,6 +615,8 @@ export interface Instrument {
   notes?: string | null;
   quoteMode: QuoteMode;
   preferredProvider?: string | null;
+  isin?: string | null;
+  exchangeMic?: string | null;
 
   // Taxonomy-based classifications
   classifications?: AssetClassifications | null;
@@ -727,6 +729,7 @@ export interface HoldingSummary {
   id: string;
   symbol: string;
   name?: string | null;
+  accountName?: string | null;
   holdingType: HoldingType;
   quantity: number;
   marketValue: number; // Base currency value
@@ -964,6 +967,8 @@ export interface DateRange {
 
 export type TimePeriod = "1D" | "1W" | "1M" | "3M" | "6M" | "YTD" | "1Y" | "5Y" | "ALL";
 
+export type ValuationStatus = "complete" | "partialUnpriced" | "unavailable";
+
 export interface AccountValuation {
   id: string;
   accountId: string;
@@ -975,21 +980,32 @@ export interface AccountValuation {
   investmentMarketValue: number;
   totalValue: number;
   costBasis: number;
+  bookBasis: number;
   netContribution: number;
   cashBalanceBase: number;
   investmentMarketValueBase: number;
   totalValueBase: number;
   costBasisBase: number;
+  bookBasisBase: number;
   netContributionBase: number;
   externalInflowBase: number;
   externalOutflowBase: number;
   externalFlowSource:
+    | "NO_FLOW"
     | "UNKNOWN"
+    | "CASH_AMOUNT"
+    | "QUOTE_DERIVED_MARKET_VALUE"
+    | "COST_BASIS_FALLBACK"
+    | "REMOVED_LOT_BASIS_FALLBACK"
+    | "LEGACY_ACTIVITY_AMOUNT_FALLBACK"
+    | "UNKNOWN_BOUNDARY_TRANSFER"
     | "ACTIVITY_DERIVED"
     | "STORED_GROSS"
     | "NET_CONTRIBUTION_FALLBACK"
     | "MIXED";
   performanceEligibleValueBase: number;
+  valueStatus: ValuationStatus;
+  basisStatus: BasisStatus;
   calculatedAt: string;
 }
 
@@ -1117,12 +1133,14 @@ export interface PerformanceResult {
   attribution: PerformanceAttribution;
   risk: PerformanceRisk;
   dataQuality: PerformanceDataQuality;
+  basisStatus?: BasisStatus;
+  summary?: PerformanceSummary;
   series: ReturnData[];
   isHoldingsMode?: boolean;
   isMixedTrackingMode?: boolean;
 }
 
-export type PerformanceSummaryProfile = "full" | "headline";
+export type PerformanceSummaryProfile = "full" | "summary" | "dashboard";
 
 export interface PerformanceScopeDescriptor {
   id: string;
@@ -1135,6 +1153,24 @@ export interface PerformancePeriod {
 }
 
 export type ReturnMethod = "timeWeighted" | "valueReturn" | "symbolPriceBased" | "notApplicable";
+
+export type BasisStatus = "complete" | "partialUnknown" | "unknown" | "notApplicable";
+
+export type PerformanceSummaryBasis = "marketValue" | "bookBasis" | "mixed" | "notApplicable";
+
+export type PerformanceSummaryStatus = "complete" | "unavailable";
+
+export interface PerformanceSummary {
+  amount?: number | null;
+  percent?: number | null;
+  method: ReturnMethod;
+  basis: PerformanceSummaryBasis;
+  quality: PerformanceDataQuality["status"];
+  amountStatus: PerformanceSummaryStatus;
+  percentStatus: PerformanceSummaryStatus;
+  basisStatus: BasisStatus;
+  reasons: string[];
+}
 
 export interface PerformanceReturns {
   twr?: number | null;
@@ -2391,6 +2427,8 @@ export type ScenarioMode = "cash_flow_only" | "sell_to_rebalance" | "hybrid";
 export type DriftStatus = "in_band" | "underweight" | "overweight" | "not_targeted";
 export type RebalanceTo = "nearest_band" | "exact_target";
 
+export type BandType = "absolute" | "hybrid";
+
 export interface AllocationTarget {
   id: string;
   name: string;
@@ -2399,6 +2437,8 @@ export interface AllocationTarget {
   taxonomyId: string;
   triggerType: TriggerType;
   driftBandBps: number;
+  bandType: BandType;
+  relativeFactorBps: number;
   rebalanceGoal: RebalanceGoal;
   minTradeAmount: string;
   wholeSharesOnly: boolean;
@@ -2415,6 +2455,8 @@ export interface NewAllocationTarget {
   taxonomyId: string;
   triggerType: TriggerType;
   driftBandBps: number;
+  bandType?: BandType;
+  relativeFactorBps?: number;
   rebalanceGoal?: RebalanceGoal;
   minTradeAmount?: string;
   wholeSharesOnly?: boolean;
@@ -2455,6 +2497,7 @@ export interface DriftRow {
   currentValue: number;
   targetValue: number;
   valueDelta: number;
+  effectiveBandBps: number;
   status: DriftStatus;
   isRequired: boolean;
   isZeroCurrent: boolean;
@@ -2471,6 +2514,7 @@ export interface DriftReport {
   outOfBandCount: number;
   rows: DriftRow[];
   holdings?: DriftHoldingsReport | null;
+  deployableCash: number;
 }
 
 export interface DriftHoldingRow {
@@ -2502,6 +2546,7 @@ export interface DriftHoldingsReport {
 export type RebalanceWarningKind =
   | "missing_quote"
   | "no_buy_candidate"
+  | "tagged_cash"
   | "unclassified_asset"
   | "partial_classification";
 

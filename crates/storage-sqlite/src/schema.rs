@@ -215,6 +215,8 @@ diesel::table! {
         external_outflow_base -> Text,
         external_flow_source -> Text,
         performance_eligible_value_base -> Text,
+        value_status -> Text,
+        basis_status -> Text,
         calculated_at -> Text,
     }
 }
@@ -725,6 +727,8 @@ diesel::table! {
         taxonomy_id -> Text,
         trigger_type -> Text,
         drift_band_bps -> Integer,
+        band_type -> Text,
+        relative_factor_bps -> Integer,
         rebalance_goal -> Text,
         min_trade_amount -> Text,
         whole_shares_only -> Integer,

@@ -400,7 +400,8 @@ pub async fn initialize_context(
             quote_service.clone(),
             fx_service.clone(),
         )
-        .with_activity_repository(activity_repository.clone(), timezone.clone()),
+        .with_activity_repository(activity_repository.clone(), timezone.clone())
+        .with_lot_repository(lots_repository.clone()),
     );
 
     let performance_service = Arc::new(
@@ -427,10 +428,10 @@ pub async fn initialize_context(
         .with_lot_repository(lots_repository.clone()),
     );
 
-    let allocation_service = Arc::new(AllocationService::new(
-        holdings_service.clone(),
-        taxonomy_service.clone(),
-    ));
+    let allocation_service = Arc::new(
+        AllocationService::new(holdings_service.clone(), taxonomy_service.clone())
+            .with_account_service(account_service.clone()),
+    );
 
     let allocation_target_repository = Arc::new(AllocationTargetRepository::new(
         pool.clone(),
@@ -445,6 +446,7 @@ pub async fn initialize_context(
             allocation_target_service.clone(),
             allocation_service.clone(),
         )
+        .with_holdings_service(holdings_service.clone())
         .with_taxonomy_service(taxonomy_service.clone()),
     );
     let rebalance_service = Arc::new(RebalanceService::new(
@@ -547,6 +549,7 @@ pub async fn initialize_context(
         app_version,
     ));
     let device_sync_runtime = Arc::new(DeviceSyncRuntimeState::new());
+    let broker_sync_running = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let now = chrono::Utc::now();
     if let Err(err) = app_sync_repository
         .prune_sync_outbox(
@@ -593,6 +596,7 @@ pub async fn initialize_context(
             ai_chat_service,
             device_enroll_service,
             device_sync_runtime,
+            broker_sync_running,
             health_service,
             custom_provider_service,
             portfolio_service,

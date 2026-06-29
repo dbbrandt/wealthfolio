@@ -5,12 +5,12 @@ import { useCurrentValuation } from "@/hooks/use-current-account-valuations";
 import { useHoldings } from "@/hooks/use-holdings";
 import { useValuationHistory } from "@/hooks/use-valuation-history";
 import { HoldingType, isAlternativeAssetKind } from "@/lib/constants";
-import { performanceHeadlineReturn, performancePeriodPnl } from "@/lib/performance";
+import { performanceSummaryReturn, performancePeriodPnl } from "@/lib/performance";
 import { QueryKeys } from "@/lib/query-keys";
 import { useSettingsContext } from "@/lib/settings-provider";
 import { DateRange, TimePeriod } from "@/lib/types";
 import { PortfolioUpdateTrigger } from "@/pages/dashboard/portfolio-update-trigger";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { TimePeriod as UITimePeriod } from "@wealthfolio/ui";
 import {
   GainAmount,
@@ -106,7 +106,9 @@ export function DashboardContent() {
 
   const totalValue = portfolioCurrentValuation?.summary.totalValueBase ?? 0;
 
-  const { valuationHistory, isLoading: isValuationHistoryLoading } = useValuationHistory(dateRange);
+  const valuationHistoryRange = isAllTime ? undefined : dateRange;
+  const { valuationHistory, isLoading: isValuationHistoryLoading } =
+    useValuationHistory(valuationHistoryRange);
 
   const { settings } = useSettingsContext();
   const baseCurrency = settings?.baseCurrency ?? "USD";
@@ -125,15 +127,16 @@ export function DashboardContent() {
         startDate,
         endDate,
         filter: { type: "all" },
-        profile: "headline",
+        profile: "dashboard",
       }),
     enabled: datesReady,
+    placeholderData: keepPreviousData,
     staleTime: 30 * 1000,
     retry: 1,
   });
 
   const gainLossAmount = performancePeriodPnl(portfolioPerformance);
-  const simpleReturn = performanceHeadlineReturn(portfolioPerformance);
+  const simpleReturn = performanceSummaryReturn(portfolioPerformance);
   const isCurrentValuationUnavailable =
     !isCurrentValuationLoading && !portfolioCurrentValuation && Boolean(currentValuationError);
   const portfolioSourceDataAsOf =
@@ -192,9 +195,9 @@ export function DashboardContent() {
                 currency={baseCurrency}
                 displayCurrency={true}
               />
-              <div className="text-md flex space-x-3">
+              <div className="text-md flex min-h-5 items-center space-x-3">
                 {isPortfolioPerformanceLoading ? (
-                  <div className="flex items-center gap-3 pt-1">
+                  <div className="flex items-center gap-3">
                     <Skeleton className="h-4 w-24" />
                     <div className="border-secondary my-1 border-r pr-2" />
                     <Skeleton className="h-4 w-16" />

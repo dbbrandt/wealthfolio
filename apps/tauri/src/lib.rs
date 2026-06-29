@@ -501,6 +501,7 @@ pub fn run() {
             commands::portfolios::delete_portfolio_entry,
             // Portfolio commands
             commands::portfolio::get_holdings,
+            commands::portfolio::get_holdings_list,
             commands::portfolio::get_holding,
             commands::portfolio::get_asset_holdings,
             commands::portfolio::get_asset_lots,
@@ -639,6 +640,8 @@ pub fn run() {
             // Sync commands
             #[cfg(any(feature = "connect-sync", feature = "device-sync"))]
             commands::wealthfolio_connect::store_sync_session,
+            #[cfg(any(feature = "connect-sync", feature = "device-sync"))]
+            commands::wealthfolio_connect::post_login_bootstrap,
             #[cfg(any(feature = "connect-sync", feature = "device-sync"))]
             commands::wealthfolio_connect::clear_sync_session,
             #[cfg(any(feature = "connect-sync", feature = "device-sync"))]

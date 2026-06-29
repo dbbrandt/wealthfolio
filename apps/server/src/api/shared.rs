@@ -12,7 +12,7 @@ use anyhow::anyhow;
 use chrono::NaiveDate;
 use serde_json::json;
 use wealthfolio_core::{
-    accounts::{account_supports_purpose, AccountPurpose, AccountServiceTrait},
+    accounts::{account_supports_portfolio_scope, AccountPurpose, AccountServiceTrait},
     portfolio::{
         snapshot::{reconcile_quote_sync_from_latest_account_snapshots, SnapshotRecalcMode},
         valuation::ValuationRecalcMode,
@@ -43,7 +43,7 @@ pub fn holdings_account_ids(state: &AppState, account_ids: &[String]) -> ApiResu
         .account_service
         .get_accounts_by_ids(account_ids)?
         .into_iter()
-        .filter(|account| account_supports_purpose(&account.account_type, AccountPurpose::Holdings))
+        .filter(|account| account_supports_portfolio_scope(account, AccountPurpose::Holdings))
         .map(|account| account.id)
         .collect())
 }
@@ -116,6 +116,24 @@ pub fn trigger_full_portfolio_recalc(state: Arc<AppState>) {
         PortfolioJobConfig {
             account_ids: None,
             market_sync_mode: MarketSyncMode::None,
+            snapshot_mode: SnapshotRecalcMode::Full,
+            valuation_mode: ValuationRecalcMode::Full,
+            since_date: None,
+        },
+    );
+}
+
+/// Trigger a full portfolio recalculation that also syncs the given assets'
+/// market data. Used when a provider-backed FX pair is added so its real rate
+/// is fetched immediately instead of waiting for the periodic sync (#1143).
+pub fn trigger_portfolio_recalc_with_asset_sync(state: Arc<AppState>, asset_ids: Vec<String>) {
+    enqueue_portfolio_job(
+        state,
+        PortfolioJobConfig {
+            account_ids: None,
+            market_sync_mode: MarketSyncMode::Incremental {
+                asset_ids: Some(asset_ids),
+            },
             snapshot_mode: SnapshotRecalcMode::Full,
             valuation_mode: ValuationRecalcMode::Full,
             since_date: None,

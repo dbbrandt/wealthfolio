@@ -298,7 +298,7 @@ pub struct NewActivity {
     pub source_record_id: Option<String>, // Provider's record ID
     pub source_group_id: Option<String>,  // Provider grouping key
     pub idempotency_key: Option<String>,  // Stable hash for dedupe
-    pub import_run_id: Option<String>,    // Batch/run identifier
+    pub import_run_id: Option<String>,    // Import batch identifier
 }
 
 impl NewActivity {

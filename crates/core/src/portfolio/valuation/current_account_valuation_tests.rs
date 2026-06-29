@@ -7,10 +7,12 @@ use crate::{
     accounts::{Account, TrackingMode},
     assets::{Asset, AssetKind, InstrumentType, QuoteMode},
     portfolio::{
+        economic_events::BasisStatus,
         snapshot::{AccountStateSnapshot, Position, SnapshotSource},
         valuation::{
             calculate_current_valuation_response_from_snapshots, filter_current_valuation_accounts,
             unique_account_ids, CurrentValuationRate, DailyAccountValuation, ExternalFlowSource,
+            ValuationStatus,
         },
     },
     quotes::{LatestQuotePair, Quote},
@@ -139,16 +141,20 @@ fn stale_daily_valuation(account_id: &str) -> DailyAccountValuation {
         investment_market_value: dec!(125),
         total_value: dec!(125),
         cost_basis: Decimal::ZERO,
+        book_basis: Decimal::ZERO,
         net_contribution: Decimal::ZERO,
         cash_balance_base: Decimal::ZERO,
         investment_market_value_base: dec!(100),
         total_value_base: dec!(100),
         cost_basis_base: Decimal::ZERO,
+        book_basis_base: Decimal::ZERO,
         net_contribution_base: Decimal::ZERO,
         external_inflow_base: Decimal::ZERO,
         external_outflow_base: Decimal::ZERO,
         external_flow_source: ExternalFlowSource::Unknown,
         performance_eligible_value_base: dec!(100),
+        value_status: ValuationStatus::Complete,
+        basis_status: BasisStatus::Complete,
         calculated_at: DateTime::<Utc>::from_timestamp(0, 0).unwrap(),
     }
 }
@@ -586,7 +592,7 @@ fn current_account_valuation_preserves_requested_account_order() {
 }
 
 #[test]
-fn current_valuation_account_filter_excludes_inactive_and_archived_requested_accounts() {
+fn current_valuation_account_filter_keeps_hidden_and_excludes_archived_requested_accounts() {
     let requested = unique_account_ids(vec![
         "active".to_string(),
         "inactive".to_string(),
@@ -607,7 +613,7 @@ fn current_valuation_account_filter_excludes_inactive_and_archived_requested_acc
             .iter()
             .map(|account| account.id.as_str())
             .collect::<Vec<_>>(),
-        vec!["active"]
+        vec!["active", "inactive"]
     );
 }
 
