@@ -2004,6 +2004,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         let result = activity_service.create_activity(new_activity).await;
@@ -2057,6 +2058,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         let result = activity_service.create_activity(new_activity).await;
@@ -2198,6 +2200,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         let err = activity_service
@@ -2301,6 +2304,7 @@ mod tests {
                     source_record_id: Some("card-buy".to_string()),
                     source_group_id: None,
                     idempotency_key: None,
+                    import_run_id: None,
                 }],
                 &account,
             )
@@ -2374,6 +2378,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         // Execute
@@ -2446,6 +2451,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         // Execute
@@ -2509,6 +2515,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         activity_service
@@ -2570,6 +2577,7 @@ mod tests {
             source_record_id: Some("provider-1".to_string()),
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         let mut provider_activity_two = provider_activity_one.clone();
@@ -2629,6 +2637,7 @@ mod tests {
                 source_record_id: None,
                 source_group_id: None,
                 idempotency_key: None,
+                import_run_id: None,
             }],
             updates: vec![],
             delete_ids: vec![],
@@ -2955,6 +2964,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         // Execute
@@ -3031,6 +3041,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         let result = activity_service.create_activity(new_activity).await;
@@ -3097,6 +3108,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         let result = activity_service.create_activity(new_activity).await;
@@ -3156,6 +3168,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         let result = activity_service.create_activity(new_activity).await;
@@ -3206,6 +3219,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         let result = activity_service.create_activity(new_activity).await;
@@ -3267,6 +3281,7 @@ mod tests {
                 source_record_id: None,
                 source_group_id: None,
                 idempotency_key: None,
+                import_run_id: None,
             })
             .await
             .expect("lowercase subtype should save");
@@ -3324,6 +3339,7 @@ mod tests {
                 source_record_id: None,
                 source_group_id: None,
                 idempotency_key: None,
+                import_run_id: None,
             })
             .await
             .expect("negative provider-style signs should normalize before validation");
@@ -3378,6 +3394,7 @@ mod tests {
                     source_record_id: Some("option-buy".to_string()),
                     source_group_id: None,
                     idempotency_key: None,
+                    import_run_id: None,
                 }],
                 &account,
             )
@@ -3433,6 +3450,7 @@ mod tests {
                     source_record_id: Some("staking-cash-only".to_string()),
                     source_group_id: None,
                     idempotency_key: None,
+                    import_run_id: None,
                 }],
                 &account,
             )
@@ -3494,6 +3512,7 @@ mod tests {
                     source_record_id: Some("staking-invalid-symbol".to_string()),
                     source_group_id: None,
                     idempotency_key: None,
+                    import_run_id: None,
                 }],
                 &account,
             )
@@ -3551,6 +3570,7 @@ mod tests {
                     source_record_id: Some("interest-drip-label".to_string()),
                     source_group_id: None,
                     idempotency_key: None,
+                    import_run_id: None,
                 }],
                 &account,
             )
@@ -3605,6 +3625,7 @@ mod tests {
                     source_record_id: Some("credit-staking-label".to_string()),
                     source_group_id: None,
                     idempotency_key: None,
+                    import_run_id: None,
                 }],
                 &account,
             )
@@ -3668,6 +3689,7 @@ mod tests {
                 source_record_id: None,
                 source_group_id: None,
                 idempotency_key: None,
+                import_run_id: None,
             }],
             updates: vec![],
             delete_ids: vec![],
@@ -3744,6 +3766,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         let result = activity_service.create_activity(new_activity).await;
@@ -3915,6 +3938,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         let error = activity_service
@@ -3982,6 +4006,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         let created = activity_service
@@ -4042,6 +4067,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         let error = activity_service
@@ -4097,6 +4123,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         let result = activity_service.create_activity(new_activity).await;
@@ -4150,6 +4177,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         let result = activity_service.create_activity(new_activity).await;
@@ -4203,6 +4231,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         let result = activity_service.create_activity(new_activity).await;
@@ -4266,6 +4295,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         let result = activity_service.create_activity(new_activity).await;
@@ -4333,6 +4363,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         let result = activity_service.create_activity(new_activity).await;
@@ -4403,6 +4434,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         let result = activity_service.create_activity(new_activity).await;
@@ -4471,6 +4503,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         let result = activity_service.create_activity(new_activity).await;
@@ -4536,6 +4569,7 @@ mod tests {
                 source_record_id: None,
                 source_group_id: None,
                 idempotency_key: None,
+                import_run_id: None,
             };
 
             let result = activity_service.create_activity(new_activity).await;
@@ -4607,6 +4641,7 @@ mod tests {
                 source_record_id: None,
                 source_group_id: None,
                 idempotency_key: None,
+                import_run_id: None,
             }],
             updates: vec![],
             delete_ids: vec![],
@@ -8815,6 +8850,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         let result = activity_service.create_activity(new_activity).await;
@@ -8904,6 +8940,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         let result = activity_service.create_activity(new_activity).await;
@@ -8966,6 +9003,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         let result = activity_service.create_activity(new_activity).await;
@@ -9028,6 +9066,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         let result = activity_service.create_activity(new_activity).await;
@@ -9623,6 +9662,7 @@ mod tests {
             source_record_id: None,
             source_group_id: None,
             idempotency_key: None,
+            import_run_id: None,
         };
 
         let result = activity_service.create_activity(new_activity).await;
