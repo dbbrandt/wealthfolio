@@ -101,6 +101,21 @@ fn effective_provider(state: Option<&QuoteSyncState>, asset: &Asset) -> String {
         .unwrap_or_else(|| DATA_SOURCE_YAHOO.to_string())
 }
 
+/// Decide whether a freshly-observed `actual_source` should be persisted as the
+/// asset's `quote_sync_state.data_source`.
+///
+/// When an asset has an explicit `preferred_provider`, a transient fetch fallback
+/// to a different provider must NOT re-pin `data_source` to that fallback: doing so
+/// would make freshness planning (and the Market Data settings count) drift away
+/// from the preferred provider permanently. We only persist when the source matches
+/// the preferred provider (the normal/heal case) or when no preferred is set.
+fn should_persist_actual_source(preferred_provider: Option<&str>, actual_source: &str) -> bool {
+    match preferred_provider {
+        Some(preferred) if !preferred.is_empty() => preferred == actual_source,
+        _ => true,
+    }
+}
+
 fn extends_to_fetch_end(category: &SyncCategory) -> bool {
     matches!(
         category,
@@ -883,8 +898,17 @@ where
                             }
 
                             // Persist the actual provider used so future planning reads correct quote bounds.
-                            if let Some(actual_source) =
-                                quotes.first().map(|q| q.data_source.clone())
+                            // Skip when the source is a transient fallback away from an explicit
+                            // preferred_provider, so the preferred provider stays authoritative.
+                            if let Some(actual_source) = quotes
+                                .first()
+                                .map(|q| q.data_source.clone())
+                                .filter(|actual_source| {
+                                    should_persist_actual_source(
+                                        asset.preferred_provider().as_deref(),
+                                        actual_source,
+                                    )
+                                })
                             {
                                 match self.sync_state_store.get_by_asset_id(&asset.id) {
                                     Ok(Some(mut state)) if state.data_source != actual_source => {
@@ -2732,6 +2756,56 @@ mod tests {
             let state = test_sync_state("YAHOO");
             let asset = test_asset_with_preferred("METAL_PRICE_API");
             assert_eq!(effective_provider(Some(&state), &asset), "YAHOO");
+        }
+
+        // ---- should_persist_actual_source (WC-31) ----
+
+        #[test]
+        fn fallback_does_not_repin_data_source_away_from_preferred() {
+            // Preferred is MARKETDATA_APP but this sync fell back to YAHOO.
+            assert!(!should_persist_actual_source(
+                Some(DATA_SOURCE_MARKET_DATA_APP),
+                DATA_SOURCE_YAHOO
+            ));
+        }
+
+        #[test]
+        fn preferred_success_persists_and_heals() {
+            // Preferred succeeded (or recovered): persisting heals a previously-pinned asset.
+            assert!(should_persist_actual_source(
+                Some(DATA_SOURCE_MARKET_DATA_APP),
+                DATA_SOURCE_MARKET_DATA_APP
+            ));
+        }
+
+        #[test]
+        fn no_preferred_persists_actual_source() {
+            assert!(should_persist_actual_source(None, DATA_SOURCE_YAHOO));
+        }
+
+        #[test]
+        fn empty_preferred_persists_actual_source() {
+            assert!(should_persist_actual_source(Some(""), DATA_SOURCE_YAHOO));
+        }
+
+        #[test]
+        fn preferred_survives_a_fallback_so_next_cycle_retries_preferred() {
+            // End-to-end of the guard's intent: asset prefers MARKETDATA_APP, its
+            // data_source already reflects that, and a sync falls back to YAHOO.
+            let asset = test_asset_with_preferred(DATA_SOURCE_MARKET_DATA_APP);
+            let mut state = test_sync_state(DATA_SOURCE_MARKET_DATA_APP);
+            let actual_source = DATA_SOURCE_YAHOO;
+
+            if should_persist_actual_source(asset.preferred_provider().as_deref(), actual_source) {
+                state.data_source = actual_source.to_string();
+            }
+
+            // data_source untouched, so the next cycle still resolves to the preferred provider.
+            assert_eq!(state.data_source, DATA_SOURCE_MARKET_DATA_APP);
+            assert_eq!(
+                effective_provider(Some(&state), &asset),
+                DATA_SOURCE_MARKET_DATA_APP
+            );
         }
     }
 
