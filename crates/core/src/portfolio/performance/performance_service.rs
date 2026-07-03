@@ -747,6 +747,23 @@ impl PerformanceService {
                 curr_point.net_contribution_base - prev_point.net_contribution_base
             }
         };
+        // A quiet day that was stored as NoFlow (no activity, no net-contribution
+        // change) must not be relabeled as an inferred fallback: doing so made the
+        // data-quality warnings fire on essentially every scope, since almost every
+        // day is a quiet NoFlow day. Genuinely inferred days keep their stored
+        // NetContributionFallback source (incl. the same-day-netting case) and still
+        // warn; a stored-NoFlow day whose net contribution actually moved still falls
+        // through to the fallback below.
+        if cash_flow.is_zero()
+            && curr_point.external_flow_source == ValuationExternalFlowSource::NoFlow
+        {
+            return DailyExternalFlow {
+                date,
+                inflow: Decimal::ZERO,
+                outflow: Decimal::ZERO,
+                source: ValuationExternalFlowSource::NoFlow,
+            };
+        }
         let (inflow, outflow) = if cash_flow.is_sign_negative() {
             (Decimal::ZERO, -cash_flow)
         } else {
