@@ -92,7 +92,10 @@ Thumbs.db
 .playwright-report
 .playwright-mcp
 # AI tools
-.claude/
+# Version shared Claude project config (CLAUDE.md, commands, skills, settings.json,
+# upstream-merge-checklist.yaml); keep per-user overrides and local worktrees out.
+.claude/settings.local.json
+.claude/worktrees/
 .codex/
 .kiro/
 .conductor/

@@ -1,0 +1,165 @@
+# Upstream merge touchpoint manifest for precidix/local-customizations.
+#
+# After merging upstream, grep every pattern below. If a `must_match` pattern
+# returns no hits, a custom feature has been lost and MUST be restored before
+# the merge is considered complete.
+#
+# Patterns are extended-regex (`grep -E`). Paths are repo-relative.
+#
+# History note: the v3.4.0 upstream merge silently dropped two of the six
+# rebuild_portfolio touchpoints because the file structure changed
+# (web/index.ts -> web/core.ts). pnpm check and cargo test both passed; the
+# feature broke at runtime only. This manifest is the safety net.
+#
+# During the v3.5 upstream merge we DROPPED two prior customizations:
+# - Account Group performance (TrackedItem::AccountGroup, account_group_performance)
+#   Superseded by upstream's portfolios feature (#964 + #1011 + #1029) which
+#   ships explicit user-created portfolios with TWR/IRR — covers the same need.
+# - import_run_id stats endpoint (ImportRunStats, GET /activities/import/stats)
+#   User-facing /import/stats API removed. The import_run_id field on NewActivity
+#   and the ImportRun creation in CSV import flow are still in place but no
+#   longer exposed via a dedicated endpoint (broker import-runs endpoint still
+#   works upstream).
+
+features:
+  - name: single-account-history-rebuild
+    description: >
+      Rebuild portfolio history for a single account without refetching market
+      prices. 8 cross-stack touchpoints — partial reapply silently breaks web
+      mode (toast, no backend log).
+    touchpoints:
+      - file: apps/tauri/src/commands/portfolio.rs
+        must_match: "pub async fn rebuild_portfolio"
+      - file: apps/tauri/src/lib.rs
+        must_match: "commands::portfolio::rebuild_portfolio"
+      - file: apps/server/src/api/portfolio.rs
+        must_match: "async fn rebuild_portfolio"
+      - file: apps/server/src/api/portfolio.rs
+        must_match: '\.route\("/portfolio/rebuild"'
+      - file: apps/frontend/src/adapters/web/core.ts
+        must_match: 'rebuild_portfolio: \{ method: "POST", path: "/portfolio/rebuild" \}'
+      - file: apps/frontend/src/adapters/web/core.ts
+        must_match: 'case "rebuild_portfolio":'
+      - file: apps/frontend/src/adapters/web/index.ts
+        must_match: "rebuildPortfolio"
+      - file: apps/frontend/src/adapters/shared/portfolio.ts
+        must_match: "export const rebuildPortfolio"
+      - file: apps/frontend/src/hooks/use-calculate-portfolio.ts
+        must_match: "useRebuildPortfolioMutation"
+      - file: apps/frontend/src/pages/account/account-page.tsx
+        must_match: "useRebuildPortfolioMutation"
+
+  - name: force-sync-from-this-device
+    description: >
+      UI to force-push the local web instance's data to mobile devices via
+      Wealthfolio Connect. Used when sync gets stale after backups or bulk
+      changes. Lives in the device-sync section.
+    touchpoints:
+      - file: apps/frontend/src/features/devices-sync/components/device-sync-section.tsx
+        must_match: "handleForceSyncFromThisDevice"
+      - file: apps/frontend/src/features/devices-sync/components/device-sync-section.tsx
+        must_match: "Force Sync from This Device"
+
+  - name: lcb-build-naming
+    description: >
+      Local build identifier so LCB can coexist with the production Wealthfolio
+      install (different bundle id => separate app data dir).
+    touchpoints:
+      - file: apps/tauri/tauri.conf.json
+        must_match: '"productName": "Wealthfolio LCB"'
+      - file: apps/tauri/tauri.conf.json
+        must_match: '"identifier": "com.teymz.wealthfolio.lcb"'
+
+  - name: no-market-fetch-on-startup
+    description: >
+      WC-38 (local): the periodic market-data scheduler must NOT fetch on boot.
+      Upstream spawns run_periodic_sync with a 120s initial delay, so every
+      restart — including crash-triggered auto-restarts (issue #15) — re-ran a
+      full multi-hundred-asset sync (~3.7min), surfacing as "super long
+      calculating" after edits. We set the initial delay equal to the interval so
+      startup/restart does no sync. Reapply if an upstream merge reverts main.rs
+      to the 120s initial delay.
+    touchpoints:
+      - file: apps/server/src/main.rs
+        must_match: "let market_sync_interval"
+      - file: apps/server/src/main.rs
+        must_match: "WC-38"
+
+  - name: import-run-id-on-csv-activities
+    description: >
+      Local: stamp import_run_id on every activity inserted via CSV import so
+      import batches are trackable. The /activities/import/stats endpoint that
+      consumed it was dropped in v3.5, but the field-stamping in the import flow
+      is retained. See tech-debt note (storage-sqlite ↔ connect coupling).
+    touchpoints:
+      - file: crates/core/src/activities/activities_service.rs
+        must_match: "new_act.import_run_id = Some\\(import_run_id"
+
+# Areas where upstream changes are most likely to collide with custom work.
+# Not pass/fail — just review carefully when merge touches these.
+high_risk_areas:
+  - path: apps/frontend/src/adapters/web/core.ts
+    reason: COMMANDS map and invoke() switch — upstream restructures historically drop entries silently.
+  - path: apps/frontend/src/adapters/web/index.ts
+    reason: Web adapter re-export list — upstream churn drops entries silently.
+  - path: apps/server/src/api/portfolio.rs
+    reason: Custom /portfolio/rebuild route was added without ever being committed in the file's git log; very easy to lose.
+  - path: apps/frontend/src/pages/account/account-page.tsx
+    reason: '"Rebuild History" button wiring; upstream regularly iterates on this page.'
+  - path: apps/frontend/src/features/devices-sync/components/device-sync-section.tsx
+    reason: Force-sync UI; upstream regularly iterates on this file.
+  - path: apps/tauri/src/context/providers.rs
+    reason: DI wiring for backend services — service constructor signatures change upstream; out-of-band customizations break the build.
+  - path: apps/server/src/main_lib.rs
+    reason: Server-side DI wiring (mirrors providers.rs); same risk profile.
+
+# Bug fixes carried locally that are candidates to contribute upstream. Unlike
+# `features` above (local-only, must survive every merge), these SHOULD land
+# upstream eventually. Once a fix is accepted upstream, drop the local copy on the
+# next merge to avoid conflicts. Track PR status here.
+upstream_candidate_fixes:
+  - id: WC-34
+    commit: de6b9fad
+    summary: >
+      Stop relabeling quiet NoFlow days as NetContributionFallback at query time,
+      which made the two external-cash-flow data-quality warnings fire on nearly
+      every performance scope.
+    files:
+      - crates/core/src/portfolio/performance/performance_service.rs
+    upstream_status: >
+      Draft ready at n8n/docs/WC-34-Wealthfolio-Upstream-Issue-Draft.md; not yet filed.
+  - id: WC-31
+    commit: c849b5af
+    summary: >
+      Keep an asset's explicit preferred_provider authoritative when a transient
+      fetch falls back to another provider (should_persist_actual_source), instead
+      of re-pinning data_source to the fallback.
+    files:
+      - crates/core/src/quotes/sync.rs
+    upstream_status: not filed.
+  - id: provider-priority-save
+    commit: 6c917878
+    summary: >
+      Persist market-data provider priority on +/- click; fixes a stale-state race
+      that silently dropped the reordering.
+    files:
+      - apps/frontend/src/features/settings/market-data/market-data-settings.tsx
+    upstream_status: not filed.
+
+# Non-feature divergences to re-check on each merge (not pass/fail).
+housekeeping:
+  - path: apps/frontend/src/lib/types.ts
+    note: >
+      Local branch removes the AccountGroup interface (dropped v3.5 feature). If an
+      upstream merge reintroduces AccountGroup or references it, reconcile.
+  - path: import/
+    note: >
+      Local MS activity import fixtures (CSV/XLSX) — data, not code. Consider
+      gitignoring; not a feature to preserve.
+  - paths:
+      - scripts/dev-web.mjs
+      - scripts/start-web.sh
+      - .env.sample
+      - .claude/settings.json
+      - .gitignore
+    note: Local dev/web tooling and config; keep, do not upstream.
