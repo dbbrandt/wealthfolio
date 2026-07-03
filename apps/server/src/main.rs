@@ -108,13 +108,20 @@ async fn main() -> anyhow::Result<()> {
     // Start background broker sync scheduler (4-hour interval)
     scheduler::start_broker_sync_scheduler(state.clone());
 
-    // Start periodic market data sync (6h interval, 2min initial delay)
+    // WC-38 (local customization): do NOT fetch market data on startup.
+    // Upstream ran the first periodic sync 2min after boot, so every restart —
+    // including the crash-triggered auto-restarts (see issue #15) — re-ran a full
+    // multi-hundred-asset market-data sync (~3.7min), which is what surfaced as
+    // "super long calculating" after each edit. Setting the initial delay equal to
+    // the interval means the first sync happens one full interval after boot, so
+    // startup/restart is cheap; the ongoing 6h cadence is unchanged.
     let quote_svc = state.quote_service.clone();
+    let market_sync_interval = std::time::Duration::from_secs(6 * 3600);
     tokio::spawn(async move {
         wealthfolio_core::quotes::scheduler::run_periodic_sync(
             quote_svc,
-            std::time::Duration::from_secs(120),
-            std::time::Duration::from_secs(6 * 3600),
+            market_sync_interval,
+            market_sync_interval,
         )
         .await;
     });
