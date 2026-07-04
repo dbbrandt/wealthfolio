@@ -133,12 +133,17 @@ pub fn plan_portfolio_job(events: &[DomainEvent], timezone: &str) -> Option<Port
         } else {
             Some(account_ids.into_iter().collect())
         },
-        market_sync_mode: MarketSyncMode::Incremental {
-            asset_ids: if asset_ids.is_empty() {
-                None
-            } else {
-                Some(asset_ids.into_iter().collect())
-            },
+        // WC-40 (local customization): when the batch carries no asset IDs
+        // (account edits, manual snapshots, device-sync pulls, tracking-mode
+        // changes), skip the market sync entirely. Upstream defaulted to
+        // Incremental{asset_ids: None}, which syncs ALL assets (~4 min against
+        // provider rate limits) for events that never need fresh quotes.
+        market_sync_mode: if asset_ids.is_empty() {
+            MarketSyncMode::None
+        } else {
+            MarketSyncMode::Incremental {
+                asset_ids: Some(asset_ids.into_iter().collect()),
+            }
         },
         snapshot_mode: SnapshotRecalcMode::Full,
         valuation_mode: ValuationRecalcMode::Full,
@@ -301,12 +306,9 @@ mod tests {
         let acc_ids = config.account_ids.unwrap();
         assert!(acc_ids.contains(&"acc1".to_string()));
 
-        // FX assets are synced via AssetsCreated events, not constructed from currencies
-        if let MarketSyncMode::Incremental { asset_ids } = config.market_sync_mode {
-            assert!(asset_ids.is_none());
-        } else {
-            panic!("Expected Incremental mode");
-        }
+        // FX assets are synced via AssetsCreated events, not constructed from currencies.
+        // WC-40: account-only batches carry no asset IDs, so no market sync is planned.
+        assert!(matches!(config.market_sync_mode, MarketSyncMode::None));
     }
 
     #[test]
@@ -333,6 +335,15 @@ mod tests {
         } else {
             panic!("Expected Incremental mode");
         }
+    }
+
+    #[test]
+    fn test_plan_portfolio_job_device_sync_pull_skips_market_sync() {
+        // WC-40: a device-sync pull needs a recalc but no market data fetch.
+        let events = vec![DomainEvent::DeviceSyncPullComplete];
+
+        let config = plan_portfolio_job(&events, "UTC").unwrap();
+        assert!(matches!(config.market_sync_mode, MarketSyncMode::None));
     }
 
     #[test]

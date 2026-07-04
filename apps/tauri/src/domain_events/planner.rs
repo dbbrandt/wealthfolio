@@ -115,9 +115,13 @@ pub fn plan_portfolio_job(
         builder = builder.account_ids(Some(account_ids.into_iter().collect()));
     }
 
-    // Use incremental sync with the collected asset IDs
+    // WC-40 (local customization): when the batch carries no asset IDs
+    // (account edits, manual snapshots, device-sync pulls, tracking-mode
+    // changes), skip the market sync entirely. Upstream defaulted to
+    // Incremental{asset_ids: None}, which syncs ALL assets for events that
+    // never need fresh quotes.
     let sync_mode = if asset_ids.is_empty() {
-        wealthfolio_core::quotes::MarketSyncMode::Incremental { asset_ids: None }
+        wealthfolio_core::quotes::MarketSyncMode::None
     } else {
         wealthfolio_core::quotes::MarketSyncMode::Incremental {
             asset_ids: Some(asset_ids.into_iter().collect()),
@@ -281,14 +285,12 @@ mod tests {
         assert!(result.is_some());
 
         let payload = result.unwrap();
-        // FX assets are synced via AssetsCreated events, not constructed from currencies
-        if let wealthfolio_core::quotes::MarketSyncMode::Incremental { asset_ids } =
-            payload.market_sync_mode
-        {
-            assert!(asset_ids.is_none());
-        } else {
-            panic!("Expected Incremental sync mode");
-        }
+        // FX assets are synced via AssetsCreated events, not constructed from currencies.
+        // WC-40: account-only batches carry no asset IDs, so no market sync is planned.
+        assert!(matches!(
+            payload.market_sync_mode,
+            wealthfolio_core::quotes::MarketSyncMode::None
+        ));
     }
 
     #[test]
@@ -458,19 +460,16 @@ mod tests {
     }
 
     #[test]
-    fn test_plan_portfolio_job_device_sync_pull_complete_triggers_incremental_sync() {
+    fn test_plan_portfolio_job_device_sync_pull_complete_skips_market_sync() {
         let events = vec![DomainEvent::device_sync_pull_complete()];
 
         let result = plan_portfolio_job(&events, "UTC").unwrap();
 
-        // Should use incremental sync mode
-        if let wealthfolio_core::quotes::MarketSyncMode::Incremental { asset_ids } =
-            result.market_sync_mode
-        {
-            assert!(asset_ids.is_none());
-        } else {
-            panic!("Expected Incremental sync mode");
-        }
+        // WC-40: a device-sync pull needs a recalc but no market data fetch.
+        assert!(matches!(
+            result.market_sync_mode,
+            wealthfolio_core::quotes::MarketSyncMode::None
+        ));
     }
 
     // ── plan_categorization_job ──────────────────────────────────────────────
