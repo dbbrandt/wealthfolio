@@ -11,7 +11,6 @@ import {
   listenPortfolioUpdateError,
   listenPortfolioUpdateStart,
   logger,
-  updatePortfolio,
 } from "@/adapters";
 import { usePortfolioSyncOptional } from "@/context/portfolio-sync-context";
 import { useIsMobileViewport } from "@/hooks/use-platform";
@@ -47,7 +46,6 @@ const useGlobalEventListener = () => {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [areListenersReady, setAreListenersReady] = useState(false);
-  const hasTriggeredInitialUpdate = useRef(false);
   const isDesktopEnv = isDesktop;
   const isMobileViewport = useIsMobileViewport();
   const syncContext = usePortfolioSyncOptional();
@@ -315,17 +313,12 @@ const useGlobalEventListener = () => {
         Array.from(POST_LOGIN_REQUIRED_LISTENERS).every((name) => readyListeners.has(name)),
       );
 
-      // Trigger initial portfolio update after listeners are set up
-      if (!hasTriggeredInitialUpdate.current) {
-        hasTriggeredInitialUpdate.current = true;
-        logger.debug("Triggering initial portfolio update from frontend");
-
-        // Trigger portfolio update
-        updatePortfolio().catch((error) => {
-          logger.error("Failed to trigger initial portfolio update: " + String(error));
-        });
-        // Note: Update check is now handled by useCheckUpdateOnStartup query in UpdateDialog
-      }
+      // WC-40 (local customization): do NOT trigger a portfolio update on app mount.
+      // Upstream fired updatePortfolio() here on every page load, which runs a full
+      // incremental market-data sync of all assets (~4 min against provider rate
+      // limits). Freshness is covered by the server's 6h periodic sync and the
+      // explicit "Update quotes" buttons.
+      // Note: Update check is now handled by useCheckUpdateOnStartup query in UpdateDialog
     };
 
     setupListeners().catch((error) => {
