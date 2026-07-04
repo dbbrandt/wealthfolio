@@ -85,6 +85,18 @@ features:
       - file: apps/server/src/main.rs
         must_match: "WC-38"
 
+  - name: no-market-fetch-on-app-mount
+    description: >
+      WC-40 (local): the frontend must NOT trigger a portfolio update (full
+      incremental market sync, ~4 min) on every app mount/page reload. Upstream
+      calls updatePortfolio() once per mount in the global event listener.
+      Companion to no-market-fetch-on-startup (WC-38): scheduler + explicit
+      buttons are the only full-sync triggers. Reapply if a merge restores the
+      updatePortfolio() call on mount.
+    touchpoints:
+      - file: apps/frontend/src/use-global-event-listener.ts
+        must_match: "WC-40"
+
   - name: import-run-id-on-csv-activities
     description: >
       Local: stamp import_run_id on every activity inserted via CSV import so
@@ -136,6 +148,43 @@ upstream_candidate_fixes:
       of re-pinning data_source to the fallback.
     files:
       - crates/core/src/quotes/sync.rs
+    upstream_status: not filed.
+  - id: WC-40-planner-no-asset-ids-no-sync
+    commit: 75d45f41
+    summary: >
+      Domain-event batches with no asset IDs (account edits, manual snapshots,
+      device-sync pulls, tracking-mode changes) defaulted to
+      MarketSyncMode::Incremental{None} = sync ALL assets. Changed to
+      MarketSyncMode::None. Applied in BOTH apps/server and apps/tauri planners.
+      Merge check: grep 'WC-40' in both planner.rs files.
+    files:
+      - apps/server/src/domain_events/planner.rs
+      - apps/tauri/src/domain_events/planner.rs
+    upstream_status: not filed.
+  - id: WC-40-cross-provider-quote-bounds
+    commit: 41ab8b2e
+    summary: >
+      Sync planning computed quote coverage filtered by the asset's assigned
+      provider, so history stored under another source (e.g., Yahoo rows on a
+      marketdata.app asset, fetched via fallback) was invisible: 363/439 assets
+      were permanently NeedsBackfill and ~18k quote rows were refetched on every
+      sync. get_quote_bounds_for_assets now spans all sources (trait signature
+      changed: source param removed). Companion give-up marker: migration
+      2026-07-04-000001_backfill_attempt_marker adds
+      backfill_attempted_at/backfill_attempted_start to quote_sync_state;
+      planner skips a backfill window already attempted within
+      BACKFILL_RETRY_INTERVAL_DAYS (30) unless the window moved earlier.
+      Merge check: grep 'WC-40' in crates/core/src/quotes/{sync.rs,sync_state.rs,
+      store.rs,constants.rs} and storage-sqlite market_data/{repository.rs,model.rs}.
+    files:
+      - crates/core/src/quotes/store.rs
+      - crates/core/src/quotes/sync.rs
+      - crates/core/src/quotes/sync_state.rs
+      - crates/core/src/quotes/constants.rs
+      - crates/storage-sqlite/src/market_data/repository.rs
+      - crates/storage-sqlite/src/market_data/model.rs
+      - crates/storage-sqlite/src/schema.rs
+      - crates/storage-sqlite/migrations/2026-07-04-000001_backfill_attempt_marker/
     upstream_status: not filed.
   - id: provider-priority-save
     commit: 6c917878

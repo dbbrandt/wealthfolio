@@ -46,6 +46,8 @@ vi.mock("@/hooks/use-accounts", () => ({
 
 vi.mock("@/hooks/use-calculate-portfolio", () => ({
   useRecalculatePortfolioMutation: vi.fn(),
+  // Local customization: account page also uses the single-account rebuild hook.
+  useRebuildPortfolioMutation: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
 }));
 
 vi.mock("@/hooks/use-current-account-valuations", () => ({
