@@ -824,6 +824,30 @@ where
         }
     }
 
+    /// WC-40: after a historical-backfill fetch completes, remember the window
+    /// start so planning can skip re-attempting a window the providers have
+    /// already shown they cannot fill (see `backfill_recently_exhausted`).
+    async fn record_backfill_attempt_if_needed(&self, asset: &Asset, plan: &SymbolSyncPlan) {
+        if !matches!(plan.category, SyncCategory::NeedsBackfill) {
+            return;
+        }
+        match self.sync_state_store.get_by_asset_id(&asset.id) {
+            Ok(Some(mut state)) => {
+                state.record_backfill_attempt(plan.start_date);
+                if let Err(e) = self.sync_state_store.upsert(&state).await {
+                    warn!("Failed to record backfill attempt for {}: {:?}", asset.id, e);
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                warn!(
+                    "Failed to load sync state to record backfill attempt for {}: {:?}",
+                    asset.id, e
+                );
+            }
+        }
+    }
+
     /// Sync a single asset according to its sync plan.
     ///
     /// Uses per-asset locking (US-012) to prevent duplicate sync work when multiple
@@ -930,6 +954,8 @@ where
                                 }
                             }
 
+                            self.record_backfill_attempt_if_needed(asset, plan).await;
+
                             AssetSyncResult {
                                 asset_id,
                                 quotes_added: quotes_count,
@@ -962,6 +988,7 @@ where
                     if let Err(e) = self.sync_state_store.update_after_sync(&asset.id).await {
                         warn!("Failed to update sync state for {}: {:?}", asset.id, e);
                     }
+                    self.record_backfill_attempt_if_needed(asset, plan).await;
                     AssetSyncResult {
                         asset_id,
                         quotes_added: 0,
@@ -1152,23 +1179,9 @@ where
             .activity_repo
             .get_holdings_snapshot_bounds_for_assets(&asset_ids)?;
 
-        // Compute quote bounds on-the-fly from quotes table, filtered by provider
-        // Group states by data_source to batch quote bounds queries
-        let mut quote_bounds_by_source: HashMap<String, HashMap<String, (NaiveDate, NaiveDate)>> =
-            HashMap::new();
-        for state in &states {
-            if !quote_bounds_by_source.contains_key(&state.data_source) {
-                let source_assets: Vec<String> = states
-                    .iter()
-                    .filter(|s| s.data_source == state.data_source)
-                    .map(|s| s.asset_id.clone())
-                    .collect();
-                let bounds = self
-                    .quote_store
-                    .get_quote_bounds_for_assets(&source_assets, &state.data_source)?;
-                quote_bounds_by_source.insert(state.data_source.clone(), bounds);
-            }
-        }
+        // Compute quote bounds on-the-fly from quotes table.
+        // WC-40: bounds span all sources — coverage from any provider counts.
+        let quote_bounds = self.quote_store.get_quote_bounds_for_assets(&asset_ids)?;
 
         let mut plans = Vec::new();
 
@@ -1183,9 +1196,8 @@ where
                 holdings_bounds.get(&state.asset_id).copied(),
             );
 
-            let (quote_min, quote_max) = quote_bounds_by_source
-                .get(&state.data_source)
-                .and_then(|bounds| bounds.get(&state.asset_id))
+            let (quote_min, quote_max) = quote_bounds
+                .get(&state.asset_id)
                 .map(|(min, max)| (Some(*min), Some(*max)))
                 .unwrap_or((None, None));
 
@@ -1216,7 +1228,15 @@ where
                 if let Some((start_date, end_date)) =
                     calculate_sync_window(&category, &inputs, effective_today)
                 {
-                    if start_date <= end_date {
+                    // WC-40: skip backfill windows a recent attempt could not fill.
+                    let backfill_exhausted = state.backfill_recently_exhausted(start_date, now);
+
+                    if backfill_exhausted {
+                        debug!(
+                            "Skipping backfill for {} - window from {} recently attempted with no further data",
+                            state.asset_id, start_date
+                        );
+                    } else if start_date <= end_date {
                         plans.push(SymbolSyncPlan {
                             asset_id: state.asset_id.clone(),
                             category: category.clone(),
@@ -1422,21 +1442,12 @@ where
         let syncable_ids: Vec<String> = syncable.iter().map(|asset| asset.id.clone()).collect();
         let existing_states = self.sync_state_store.get_by_asset_ids(&syncable_ids)?;
 
-        // Compute quote bounds per provider
-        let mut quote_bounds: HashMap<String, (NaiveDate, NaiveDate)> = HashMap::new();
-        let mut assets_by_provider: HashMap<String, Vec<String>> = HashMap::new();
-        for asset in &syncable {
-            let provider = effective_provider(existing_states.get(&asset.id), asset);
-            assets_by_provider
-                .entry(provider)
-                .or_default()
-                .push(asset.id.clone());
-        }
-        for (provider, ids) in &assets_by_provider {
-            if let Ok(bounds) = self.quote_store.get_quote_bounds_for_assets(ids, provider) {
-                quote_bounds.extend(bounds);
-            }
-        }
+        // Compute quote bounds.
+        // WC-40: bounds span all sources — coverage from any provider counts.
+        let quote_bounds = self
+            .quote_store
+            .get_quote_bounds_for_assets(&syncable_ids)
+            .unwrap_or_default();
 
         // Build plans using the mode-specific date range calculation
         let mut plans: Vec<SymbolSyncPlan> = Vec::new();
@@ -1542,7 +1553,22 @@ where
                 if let Some((start_date, end_date)) =
                     calculate_sync_window(&category, &planning_inputs, effective_today)
                 {
-                    if start_date <= end_date {
+                    // WC-40: skip backfill windows a recent attempt could not
+                    // fill — providers had no data that far back, so retrying
+                    // every sync just burns rate limit. Retried after
+                    // BACKFILL_RETRY_INTERVAL_DAYS, or immediately if the
+                    // required window moved earlier (older activity added).
+                    let backfill_exhausted = state
+                        .as_ref()
+                        .map(|s| s.backfill_recently_exhausted(start_date, now))
+                        .unwrap_or(false);
+
+                    if backfill_exhausted {
+                        debug!(
+                            "Skipping backfill for {} - window from {} recently attempted with no further data",
+                            asset.id, start_date
+                        );
+                    } else if start_date <= end_date {
                         plans.push(SymbolSyncPlan {
                             asset_id: asset.id.clone(),
                             category: category.clone(),
@@ -1663,10 +1689,10 @@ where
             let required_start = activity_date.0
                 - Duration::days(QUOTE_HISTORY_BUFFER_DAYS + BACKFILL_SAFETY_MARGIN_DAYS);
 
-            // Compute quote bounds for this asset filtered by provider
+            // Compute quote bounds for this asset (WC-40: across all sources)
             let quote_bounds = self
                 .quote_store
-                .get_quote_bounds_for_assets(&[symbol.to_string()], &state.data_source)
+                .get_quote_bounds_for_assets(&[symbol.to_string()])
                 .unwrap_or_default();
             let earliest_quote = quote_bounds.get(symbol).map(|(min, _)| *min);
 
@@ -2715,6 +2741,8 @@ mod tests {
                 profile_enriched_at: None,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
+                backfill_attempted_at: None,
+                backfill_attempted_start: None,
             }
         }
 

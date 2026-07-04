@@ -170,7 +170,8 @@ impl SyncCategory {
 // =============================================================================
 
 use super::constants::{
-    BACKFILL_SAFETY_MARGIN_DAYS, MIN_SYNC_LOOKBACK_DAYS, OVERLAP_DAYS, QUOTE_HISTORY_BUFFER_DAYS,
+    BACKFILL_RETRY_INTERVAL_DAYS, BACKFILL_SAFETY_MARGIN_DAYS, MIN_SYNC_LOOKBACK_DAYS,
+    OVERLAP_DAYS, QUOTE_HISTORY_BUFFER_DAYS,
 };
 
 /// Inputs for sync planning, computed on-the-fly from operational tables.
@@ -374,6 +375,12 @@ pub struct QuoteSyncState {
     pub profile_enriched_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// WC-40: when a historical backfill was last attempted for this asset.
+    /// Used with `backfill_attempted_start` to avoid refetching windows the
+    /// providers have already shown they cannot fill.
+    pub backfill_attempted_at: Option<DateTime<Utc>>,
+    /// WC-40: the start date of the last attempted backfill window.
+    pub backfill_attempted_start: Option<NaiveDate>,
 }
 
 impl QuoteSyncState {
@@ -392,6 +399,32 @@ impl QuoteSyncState {
             profile_enriched_at: None,
             created_at: now,
             updated_at: now,
+            backfill_attempted_at: None,
+            backfill_attempted_start: None,
+        }
+    }
+
+    /// WC-40: record that a historical backfill starting at `window_start` was
+    /// attempted (regardless of how much data came back). Whatever the provider
+    /// had for that window is now stored, so retrying the same window sooner
+    /// than `BACKFILL_RETRY_INTERVAL_DAYS` cannot yield more data.
+    pub fn record_backfill_attempt(&mut self, window_start: NaiveDate) {
+        self.backfill_attempted_at = Some(Utc::now());
+        self.backfill_attempted_start = Some(window_start);
+        self.updated_at = Utc::now();
+    }
+
+    /// WC-40: returns true when a backfill for a window starting at
+    /// `window_start` (or later) was already attempted recently, so the planner
+    /// should skip scheduling it again. A window starting EARLIER than the last
+    /// attempt (e.g., the user added an older activity) is never suppressed.
+    pub fn backfill_recently_exhausted(&self, window_start: NaiveDate, now: DateTime<Utc>) -> bool {
+        match (self.backfill_attempted_at, self.backfill_attempted_start) {
+            (Some(attempted_at), Some(attempted_start)) => {
+                attempted_start <= window_start
+                    && (now - attempted_at).num_days() < BACKFILL_RETRY_INTERVAL_DAYS
+            }
+            _ => false,
         }
     }
 
@@ -1029,5 +1062,28 @@ mod tests {
         let (_, end) = window.unwrap();
 
         assert_eq!(end, today, "New category should always end at today");
+    }
+
+    #[test]
+    fn test_backfill_recently_exhausted() {
+        // WC-40: a recorded attempt suppresses the same (or later-starting)
+        // window until the retry interval elapses; earlier windows are never
+        // suppressed; stale attempts are retried.
+        let now = Utc::now();
+        let window_start = now.date_naive() - Duration::days(365);
+
+        let mut state = QuoteSyncState::new("asset-1".to_string(), "YAHOO".to_string());
+        assert!(!state.backfill_recently_exhausted(window_start, now));
+
+        state.record_backfill_attempt(window_start);
+        assert!(state.backfill_recently_exhausted(window_start, now));
+        assert!(state.backfill_recently_exhausted(window_start + Duration::days(10), now));
+
+        // Window moved earlier (older activity added) -> retry immediately
+        assert!(!state.backfill_recently_exhausted(window_start - Duration::days(1), now));
+
+        // Retry interval elapsed -> retry
+        let later = now + Duration::days(BACKFILL_RETRY_INTERVAL_DAYS + 1);
+        assert!(!state.backfill_recently_exhausted(window_start, later));
     }
 }

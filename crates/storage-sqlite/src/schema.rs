@@ -428,6 +428,8 @@ diesel::table! {
         profile_enriched_at -> Nullable<Text>,
         created_at -> Text,
         updated_at -> Text,
+        backfill_attempted_at -> Nullable<Text>,
+        backfill_attempted_start -> Nullable<Text>,
     }
 }
 

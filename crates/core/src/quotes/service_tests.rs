@@ -272,14 +272,14 @@ mod tests {
         fn get_quote_bounds_for_assets(
             &self,
             asset_ids: &[String],
-            source: &str,
         ) -> Result<HashMap<String, (NaiveDate, NaiveDate)>> {
             let quotes = self.quotes.lock().unwrap();
             let mut result = HashMap::new();
             for asset_id in asset_ids {
+                // WC-40: bounds span all sources, mirroring the sqlite impl.
                 let matching: Vec<_> = quotes
                     .iter()
-                    .filter(|q| q.asset_id == *asset_id && q.data_source.as_str() == source)
+                    .filter(|q| q.asset_id == *asset_id)
                     .collect();
                 if !matching.is_empty() {
                     let min_date = matching

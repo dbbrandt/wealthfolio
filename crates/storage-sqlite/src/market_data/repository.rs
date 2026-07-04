@@ -755,7 +755,6 @@ impl QuoteStore for MarketDataRepository {
     fn get_quote_bounds_for_assets(
         &self,
         asset_ids: &[String],
-        source: &str,
     ) -> Result<HashMap<String, (NaiveDate, NaiveDate)>> {
         if asset_ids.is_empty() {
             return Ok(HashMap::new());
@@ -778,10 +777,11 @@ impl QuoteStore for MarketDataRepository {
         for chunk in chunk_for_sqlite(asset_ids) {
             let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
 
+            // WC-40: bounds intentionally span all sources (see trait docs).
             let sql = format!(
                 "SELECT asset_id, MIN(day) as min_day, MAX(day) as max_day \
                  FROM quotes \
-                 WHERE asset_id IN ({}) AND source = ? \
+                 WHERE asset_id IN ({}) \
                  GROUP BY asset_id",
                 placeholders
             );
@@ -791,7 +791,6 @@ impl QuoteStore for MarketDataRepository {
             for asset_id in chunk {
                 query_builder = query_builder.bind::<Text, _>(asset_id);
             }
-            query_builder = query_builder.bind::<Text, _>(source);
 
             let rows: Vec<QuoteBoundsRow> = query_builder
                 .load::<QuoteBoundsRow>(&mut conn)

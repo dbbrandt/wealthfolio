@@ -2708,7 +2708,6 @@ mod tests {
         fn get_quote_bounds_for_assets(
             &self,
             _asset_ids: &[String],
-            _source: &str,
         ) -> Result<HashMap<String, (NaiveDate, NaiveDate)>> {
             unimplemented!("unused in this test")
         }
@@ -2822,7 +2821,6 @@ mod tests {
         fn get_quote_bounds_for_assets(
             &self,
             _asset_ids: &[String],
-            _source: &str,
         ) -> Result<HashMap<String, (NaiveDate, NaiveDate)>> {
             unimplemented!("unused in this test")
         }
@@ -3476,6 +3474,8 @@ mod tests {
                 profile_enriched_at: None,
                 created_at: now,
                 updated_at: now,
+                backfill_attempted_at: None,
+                backfill_attempted_start: None,
             }],
             states: Arc::new(Mutex::new(HashMap::new())),
         });
@@ -3526,6 +3526,8 @@ mod tests {
             profile_enriched_at: Some(now),
             created_at: now,
             updated_at: now,
+            backfill_attempted_at: None,
+            backfill_attempted_start: None,
         };
         let states = Arc::new(Mutex::new(HashMap::from([(
             state.asset_id.clone(),
@@ -3678,6 +3680,8 @@ mod tests {
             profile_enriched_at: None,
             created_at: now,
             updated_at: now,
+            backfill_attempted_at: None,
+            backfill_attempted_start: None,
         };
         let states = Arc::new(Mutex::new(HashMap::from([(
             asset_id.clone(),
@@ -3741,6 +3745,8 @@ mod tests {
             profile_enriched_at: None,
             created_at: now,
             updated_at: now,
+            backfill_attempted_at: None,
+            backfill_attempted_start: None,
         };
         let states = Arc::new(Mutex::new(HashMap::from([(
             asset_id.clone(),
@@ -3860,6 +3866,8 @@ mod tests {
             profile_enriched_at: Some(now),
             created_at: now,
             updated_at: now,
+            backfill_attempted_at: None,
+            backfill_attempted_start: None,
         };
 
         let reason = TestQuoteService::no_quote_reason(Some(&asset), Some(&state));
@@ -4010,6 +4018,8 @@ mod tests {
             profile_enriched_at: Some(now),
             created_at: now,
             updated_at: now,
+            backfill_attempted_at: None,
+            backfill_attempted_start: None,
         };
 
         let reason = TestQuoteService::no_quote_reason(Some(&asset), Some(&state));
@@ -4047,6 +4057,8 @@ mod tests {
             profile_enriched_at: Some(now),
             created_at: now,
             updated_at: now,
+            backfill_attempted_at: None,
+            backfill_attempted_start: None,
         };
 
         let reason = TestQuoteService::no_quote_reason(Some(&asset), Some(&state));

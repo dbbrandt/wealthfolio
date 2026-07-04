@@ -48,6 +48,11 @@ pub const QUOTE_HISTORY_BUFFER_DAYS: i64 = 45;
 /// This helps avoid edge cases where quotes exist but barely cover the needed range.
 pub const BACKFILL_SAFETY_MARGIN_DAYS: i64 = 7;
 
+/// WC-40: how long to wait before retrying a historical backfill window that a
+/// previous attempt could not fill (providers had no data that far back).
+/// Without this, unfillable windows were refetched on every sync cycle.
+pub const BACKFILL_RETRY_INTERVAL_DAYS: i64 = 30;
+
 /// Minimum lookback days when syncing to avoid single-day fetch failures
 /// (e.g., weekends, holidays, market not yet open).
 pub const MIN_SYNC_LOOKBACK_DAYS: i64 = 5;

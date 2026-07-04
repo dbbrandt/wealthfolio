@@ -191,22 +191,25 @@ pub trait QuoteStore: Send + Sync {
     /// Gets quote date bounds (earliest, latest) for multiple assets.
     ///
     /// This is used by sync planning to determine which date ranges need quotes.
-    /// Bounds are filtered by source to ensure we only consider quotes from
-    /// the intended provider (e.g., YAHOO), not MANUAL or other sources.
+    ///
+    /// WC-40: bounds span ALL quote sources. Coverage from any provider (or a
+    /// manual quote) counts — the read path is source-agnostic, so planning must
+    /// be too. Filtering by the assigned provider made history fetched via
+    /// fallback (e.g., Yahoo rows on a marketdata.app asset) invisible, which
+    /// kept assets permanently in NeedsBackfill and refetched the same years of
+    /// data on every sync.
     ///
     /// # Arguments
     ///
     /// * `asset_ids` - The asset identifiers to query
-    /// * `source` - The quote source to filter by (e.g., "YAHOO")
     ///
     /// # Returns
     ///
     /// A map from asset_id to (earliest_date, latest_date).
-    /// Assets without quotes for the specified source are omitted.
+    /// Assets without any quotes are omitted.
     fn get_quote_bounds_for_assets(
         &self,
         asset_ids: &[String],
-        source: &str,
     ) -> Result<HashMap<String, (NaiveDate, NaiveDate)>>;
 
     // =========================================================================

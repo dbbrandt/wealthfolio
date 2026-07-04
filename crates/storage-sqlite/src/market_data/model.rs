@@ -131,6 +131,10 @@ pub struct QuoteSyncStateDB {
     pub created_at: String,
     #[diesel(sql_type = diesel::sql_types::Text)]
     pub updated_at: String,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+    pub backfill_attempted_at: Option<String>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+    pub backfill_attempted_start: Option<String>,
 }
 
 /// Update payload for partial updates to quote sync state
@@ -281,6 +285,8 @@ impl From<QuoteSyncStateDB> for QuoteSyncState {
             profile_enriched_at: db.profile_enriched_at.as_deref().map(parse_datetime),
             created_at: parse_datetime(&db.created_at),
             updated_at: parse_datetime(&db.updated_at),
+            backfill_attempted_at: db.backfill_attempted_at.as_deref().map(parse_datetime),
+            backfill_attempted_start: db.backfill_attempted_start.as_deref().and_then(parse_date),
         }
     }
 }
@@ -301,6 +307,10 @@ impl From<&QuoteSyncState> for QuoteSyncStateDB {
             profile_enriched_at: state.profile_enriched_at.map(|dt| dt.to_rfc3339()),
             created_at: state.created_at.to_rfc3339(),
             updated_at: state.updated_at.to_rfc3339(),
+            backfill_attempted_at: state.backfill_attempted_at.map(|dt| dt.to_rfc3339()),
+            backfill_attempted_start: state
+                .backfill_attempted_start
+                .map(|d| d.format("%Y-%m-%d").to_string()),
         }
     }
 }
