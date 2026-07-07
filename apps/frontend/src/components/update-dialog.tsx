@@ -25,7 +25,7 @@ interface DismissedUpdate {
   dismissedAt: number;
 }
 
-const SNOOZE_DURATION_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+const SNOOZE_DURATION_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -74,15 +74,19 @@ export function UpdateDialog() {
     }
   }, [updateInfo, dismissedUpdate]);
 
-  // X button, Escape, backdrop — dismiss for current session only
+  // X button, Escape, backdrop — snooze like "Remind me later" (web mode
+  // refreshes re-mount the app, so a session-only dismiss reappears constantly)
   const handleDismiss = useCallback(() => {
     if (isPending) return;
+    if (updateInfo?.latestVersion) {
+      setDismissedUpdate({ version: updateInfo.latestVersion, dismissedAt: Date.now() });
+    }
     setIsOpen(false);
     clearUpdate();
     reset();
-  }, [isPending, clearUpdate, reset]);
+  }, [isPending, updateInfo?.latestVersion, setDismissedUpdate, clearUpdate, reset]);
 
-  // "Remind me later" — snooze for 3 days
+  // "Remind me later" — snooze for SNOOZE_DURATION_MS (14 days)
   const handleSnooze = useCallback(() => {
     if (isPending) return;
     if (updateInfo?.latestVersion) {

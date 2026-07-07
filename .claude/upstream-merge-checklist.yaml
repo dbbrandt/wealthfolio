@@ -97,6 +97,19 @@ features:
       - file: apps/frontend/src/use-global-event-listener.ts
         must_match: "WC-40"
 
+  - name: update-dialog-dismiss-snoozes
+    description: >
+      Local: closing the update dialog via X/Escape/backdrop persists the same
+      snooze as "Remind me later" (and snooze is 14 days, not 3). Upstream's
+      session-only dismiss reappears on every web-mode page refresh because a
+      refresh re-mounts the app. Reapply if a merge restores the session-only
+      handleDismiss or the 3-day constant.
+    touchpoints:
+      - file: apps/frontend/src/components/update-dialog.tsx
+        must_match: 'snooze like "Remind me later"'
+      - file: apps/frontend/src/components/update-dialog.tsx
+        must_match: "SNOOZE_DURATION_MS = 14"
+
   - name: import-run-id-on-csv-activities
     description: >
       Local: stamp import_run_id on every activity inserted via CSV import so
