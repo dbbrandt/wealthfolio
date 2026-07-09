@@ -233,16 +233,22 @@ upstream_candidate_fixes:
     upstream_status: not filed.
 
   - id: WC-44
-    commit: none (not yet fixed locally)
+    commit: 893f639a
     summary: >
       Editing any activity recalcs only that account through TODAY, while other
       accounts end yesterday; the scoped-history validation
-      (valuation_service.rs ~594, "latest valuation is X, but scope continues
-      through Y") then hard-errors every portfolio chart containing the edited
-      account until the next full update. Planned local fix (deliberately
-      deferred until upstream responds): clamp the scope's effective end date
-      to min(last_date) across members with nonzero latest value instead of
-      erroring. Issue draft: n8n/docs/WC-44-Upstream-Issue-Portfolio-Chart-Edit-Recalc.md.
+      (valuation_service.rs, "latest valuation is X, but scope continues
+      through Y") then hard-errored every portfolio chart containing the edited
+      account until the next full update. Fixed:
+      validate_scoped_history_completeness now returns the clamped scope end
+      date (min last_date across members with nonzero latest value) instead of
+      erroring, and aggregate_scoped_valuations skips valuations beyond it. The
+      freshly recalculated account's extra today-row is not aggregated until
+      the others catch up. Mid-range gap validation (missing dates inside an
+      account's active range) still hard-errors; zero-value (closed) accounts
+      keep their exemption. Issue draft:
+      n8n/docs/WC-44-Upstream-Issue-Portfolio-Chart-Edit-Recalc.md.
+      Merge check: grep 'WC-44' in valuation_service.rs.
     files:
       - crates/core/src/portfolio/valuation/valuation_service.rs
     upstream_status: >
