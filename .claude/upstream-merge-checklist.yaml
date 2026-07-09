@@ -200,7 +200,7 @@ upstream_candidate_fixes:
       - crates/storage-sqlite/migrations/2026-07-04-000001_backfill_attempt_marker/
     upstream_status: not filed.
   - id: WC-43
-    commit: uncommitted
+    commit: 9822ac0a
     summary: >
       Portfolio-scope "cash flow provenance is incomplete ... degraded flow data"
       warning fired for any scope containing both ends of a paired in-kind
