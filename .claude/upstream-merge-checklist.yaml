@@ -199,6 +199,56 @@ upstream_candidate_fixes:
       - crates/storage-sqlite/src/schema.rs
       - crates/storage-sqlite/migrations/2026-07-04-000001_backfill_attempt_marker/
     upstream_status: not filed.
+  - id: WC-43
+    commit: uncommitted
+    summary: >
+      Portfolio-scope "cash flow provenance is incomplete ... degraded flow data"
+      warning fired for any scope containing both ends of a paired in-kind
+      transfer: apply_internal_transfer_flow_adjustments combined the day's
+      provenance with CashAmount, turning QUOTE_DERIVED_MARKET_VALUE into MIXED
+      (degraded) even though no external flow remained after the adjustment.
+      Fixed: symmetric fully-removed adjustments set the day to NO_FLOW;
+      asymmetric removals (cross-currency FX deltas) keep the upstream combine.
+      Second part: subtract_flow_floor_zero floors sub-micro decimal dust
+      (stored flow vs query-time adjustment compute the same quote value in
+      different operation orders, leaving e.g. 6e-12 residue that defeated the
+      is_zero check). Third part: daily_external_flows treats sub-unit (<1.00)
+      net-contribution drift on a stored-NoFlow day as quiet instead of
+      resurrecting it as a NetContributionFallback flow — scope-removed
+      internal transfers leave cents-level drift from per-lot basis rounding,
+      which fired BOTH flow warnings (WC-34-adjacent fallthrough). Also added
+      a debug! listing degraded flow days in
+      performance_service::external_flow_quality_warnings (diagnosis aid).
+      Known remaining (data, not code): a scope day where two accounts have
+      flows with different known-good provenances (e.g. CASH_AMOUNT deposit +
+      QUOTE_DERIVED in-kind transfer) combines to MIXED = degraded; workaround
+      is dating them a day apart.
+      Related to WC-36 (account-level data-quality warnings, resolved by data
+      fixes guided by the n8n/docs/find-*.py diagnostics); WC-43 is the
+      code-level remainder that no data change can fix. Merge check: grep
+      'WC-43' in valuation_service.rs.
+    files:
+      - crates/core/src/portfolio/valuation/valuation_service.rs
+      - crates/core/src/portfolio/performance/performance_service.rs
+    upstream_status: not filed.
+
+  - id: WC-44
+    commit: none (not yet fixed locally)
+    summary: >
+      Editing any activity recalcs only that account through TODAY, while other
+      accounts end yesterday; the scoped-history validation
+      (valuation_service.rs ~594, "latest valuation is X, but scope continues
+      through Y") then hard-errors every portfolio chart containing the edited
+      account until the next full update. Planned local fix (deliberately
+      deferred until upstream responds): clamp the scope's effective end date
+      to min(last_date) across members with nonzero latest value instead of
+      erroring. Issue draft: n8n/docs/WC-44-Upstream-Issue-Portfolio-Chart-Edit-Recalc.md.
+    files:
+      - crates/core/src/portfolio/valuation/valuation_service.rs
+    upstream_status: >
+      Filed 2026-07-09 as wealthfolio/wealthfolio#1262 (cross-referenced #1139).
+      If upstream fixes it, take their fix on the next merge instead of ours.
+
   - id: provider-priority-save
     commit: 6c917878
     summary: >

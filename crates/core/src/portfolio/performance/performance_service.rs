@@ -754,7 +754,11 @@ impl PerformanceService {
         // NetContributionFallback source (incl. the same-day-netting case) and still
         // warn; a stored-NoFlow day whose net contribution actually moved still falls
         // through to the fallback below.
-        if cash_flow.is_zero()
+        // WC-43: sub-unit drift on a NoFlow day is treated as quiet. When a scope
+        // removes both legs of an internal in-kind transfer, per-lot cost-basis
+        // rounding can leave a cents-level net-contribution delta; resurrecting it
+        // as an inferred flow fired both flow data-quality warnings.
+        if cash_flow.abs() < Decimal::ONE
             && curr_point.external_flow_source == ValuationExternalFlowSource::NoFlow
         {
             return DailyExternalFlow {
@@ -792,6 +796,14 @@ impl PerformanceService {
             .iter()
             .any(|flow| flow.source == ValuationExternalFlowSource::NetContributionFallback);
         let used_degraded_gross = daily_flows.iter().any(|flow| flow.source.is_degraded());
+        if used_degraded_gross {
+            for flow in daily_flows.iter().filter(|flow| flow.source.is_degraded()) {
+                debug!(
+                    "Degraded external flow provenance on {}: {:?} (inflow {}, outflow {})",
+                    flow.date, flow.source, flow.inflow, flow.outflow
+                );
+            }
+        }
 
         let mut warnings = Vec::new();
         if used_net_fallback {

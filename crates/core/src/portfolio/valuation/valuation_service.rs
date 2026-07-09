@@ -738,16 +738,34 @@ impl ValuationService {
                 Self::subtract_flow_floor_zero(value.external_inflow_base, *inflow_to_remove);
             value.external_outflow_base =
                 Self::subtract_flow_floor_zero(value.external_outflow_base, *outflow_to_remove);
-            value.external_flow_source = Self::combine_external_flow_sources(
-                value.external_flow_source,
-                ExternalFlowSource::CashAmount,
-            );
+            // WC-43: removing a symmetric internal transfer is not itself a
+            // flow, so do not combine the day's provenance with CashAmount —
+            // for an in-kind (quote-derived) transfer that produced Mixed, a
+            // degraded source, on a day with no remaining external flow.
+            // Asymmetric removals (e.g. cross-currency FX deltas) keep the
+            // upstream combine so the residual day stays flagged and the
+            // net-contribution fallback does not resurrect the delta as a flow.
+            if inflow_to_remove == outflow_to_remove
+                && value.external_inflow_base.is_zero()
+                && value.external_outflow_base.is_zero()
+            {
+                value.external_flow_source = ExternalFlowSource::NoFlow;
+            } else {
+                value.external_flow_source = Self::combine_external_flow_sources(
+                    value.external_flow_source,
+                    ExternalFlowSource::CashAmount,
+                );
+            }
         }
     }
 
     fn subtract_flow_floor_zero(current: Decimal, amount_to_remove: Decimal) -> Decimal {
         let adjusted = current - amount_to_remove;
-        if adjusted.is_sign_negative() {
+        // WC-43: stored flows and query-time adjustments derive the same
+        // quote-based value through different operation orders, which can
+        // leave sub-micro decimal dust (e.g. 6e-12). Floor it so a fully
+        // removed internal transfer day reads as flowless.
+        if adjusted.is_sign_negative() || adjusted < Decimal::new(1, 6) {
             Decimal::ZERO
         } else {
             adjusted
@@ -2476,6 +2494,82 @@ mod tests {
             ),
             ExternalFlowSource::Unknown,
         );
+    }
+
+    // WC-43: adjusting away a symmetric internal in-kind transfer must not
+    // degrade the day's flow provenance. Before the fix, the adjustment
+    // combined the stored source with CashAmount, turning
+    // QuoteDerivedMarketValue days into Mixed (degraded) at scope level even
+    // though no external flow remained.
+    #[test]
+    fn symmetric_internal_transfer_adjustment_fully_removed_flow_becomes_no_flow() {
+        // Scope-aggregated day: transfer-out leg (one account) + transfer-in
+        // leg (another account) of the same in-kind transfer.
+        let mut values = vec![valuation(
+            "scope",
+            "2026-03-27",
+            dec!(100),
+            dec!(100),
+            dec!(70),
+            dec!(70),
+        )];
+        values[0].external_flow_source = ExternalFlowSource::QuoteDerivedMarketValue;
+        let mut adjustments = HashMap::new();
+        adjustments.insert(date("2026-03-27"), (dec!(70), dec!(70)));
+
+        ValuationService::apply_internal_transfer_flow_adjustments(&mut values, &adjustments, None);
+
+        assert_eq!(values[0].external_inflow_base, Decimal::ZERO);
+        assert_eq!(values[0].external_outflow_base, Decimal::ZERO);
+        assert_eq!(values[0].external_flow_source, ExternalFlowSource::NoFlow);
+        assert!(!values[0].external_flow_source.is_degraded());
+    }
+
+    #[test]
+    fn internal_transfer_adjustment_floors_decimal_dust_to_no_flow() {
+        // Stored flows and query-time adjustments compute the same quote-based
+        // value through different operation orders, leaving sub-micro dust.
+        let dust = Decimal::new(613, 14); // 6.13e-12
+        let mut values = vec![valuation(
+            "scope",
+            "2026-03-27",
+            dec!(100),
+            dec!(100),
+            dec!(91684.26) + dust,
+            dec!(91684.26) + dust,
+        )];
+        values[0].external_flow_source = ExternalFlowSource::QuoteDerivedMarketValue;
+        let mut adjustments = HashMap::new();
+        adjustments.insert(date("2026-03-27"), (dec!(91684.26), dec!(91684.26)));
+
+        ValuationService::apply_internal_transfer_flow_adjustments(&mut values, &adjustments, None);
+
+        assert_eq!(values[0].external_inflow_base, Decimal::ZERO);
+        assert_eq!(values[0].external_outflow_base, Decimal::ZERO);
+        assert_eq!(values[0].external_flow_source, ExternalFlowSource::NoFlow);
+    }
+
+    #[test]
+    fn asymmetric_internal_transfer_adjustment_keeps_upstream_combine() {
+        // Cross-currency internal transfer: removed legs differ (FX delta), so
+        // the day keeps the upstream combine-with-CashAmount provenance.
+        let mut values = vec![valuation(
+            "scope",
+            "2026-05-02",
+            dec!(98),
+            dec!(98),
+            dec!(98),
+            dec!(100),
+        )];
+        values[0].external_flow_source = ExternalFlowSource::QuoteDerivedMarketValue;
+        let mut adjustments = HashMap::new();
+        adjustments.insert(date("2026-05-02"), (dec!(98), dec!(100)));
+
+        ValuationService::apply_internal_transfer_flow_adjustments(&mut values, &adjustments, None);
+
+        assert_eq!(values[0].external_inflow_base, Decimal::ZERO);
+        assert_eq!(values[0].external_outflow_base, Decimal::ZERO);
+        assert_eq!(values[0].external_flow_source, ExternalFlowSource::Mixed);
     }
 
     fn valuation(
