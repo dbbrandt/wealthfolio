@@ -427,12 +427,21 @@ impl ValuationService {
         if account_ids.is_empty() {
             return Ok(Vec::new());
         }
-        Self::validate_scoped_history_completeness(account_ids, &histories)?;
+        // WC-44: returns clamped end date (min last_date across non-zero accounts)
+        // instead of erroring when one account's history outruns others.
+        let clamped_end_date =
+            Self::validate_scoped_history_completeness(account_ids, &histories)?;
 
         let mut by_date: std::collections::BTreeMap<NaiveDate, DailyAccountValuation> =
             std::collections::BTreeMap::new();
 
         for valuation in histories.into_iter().flatten() {
+            // WC-44: skip valuations beyond the clamped end date
+            if let Some(end_date) = clamped_end_date {
+                if valuation.valuation_date > end_date {
+                    continue;
+                }
+            }
             let entry =
                 by_date
                     .entry(valuation.valuation_date)
@@ -528,10 +537,18 @@ impl ValuationService {
         )
     }
 
+    /// Validates scoped history completeness and returns the clamped end date.
+    ///
+    /// WC-44: Instead of erroring when one account's history outruns others (trailing
+    /// skew from single-account recalc after an edit), we clamp the scope's effective
+    /// end date to `min(last_date)` across non-zero-valued accounts. The freshly
+    /// recalculated account's extra rows are excluded until others catch up.
+    ///
+    /// Mid-range gaps (missing dates inside an account's active range) still error.
     fn validate_scoped_history_completeness(
         account_ids: &[String],
         histories: &[Vec<DailyAccountValuation>],
-    ) -> CoreResult<()> {
+    ) -> CoreResult<Option<NaiveDate>> {
         if histories.len() != account_ids.len() {
             return Err(CoreError::Calculation(CalculatorError::Calculation(
                 format!(
@@ -546,7 +563,9 @@ impl ValuationService {
             .iter()
             .flat_map(|history| history.iter().map(|valuation| valuation.valuation_date))
             .collect();
-        let scope_last_date = union_dates.iter().next_back().copied();
+
+        // WC-44: Track min(last_date) across non-zero accounts for clamping
+        let mut min_nonzero_last_date: Option<NaiveDate> = None;
 
         for (account_id, history) in account_ids.iter().zip(histories.iter()) {
             if history.is_empty() {
@@ -568,6 +587,7 @@ impl ValuationService {
                 .max()
                 .expect("non-empty history has last date");
 
+            // Mid-range gap validation: missing dates inside the account's active range
             let missing_dates: Vec<NaiveDate> = union_dates
                 .iter()
                 .copied()
@@ -591,25 +611,20 @@ impl ValuationService {
                 )));
             }
 
-            if let Some(scope_last_date) = scope_last_date {
-                if last_date < scope_last_date {
-                    let latest = history
-                        .iter()
-                        .max_by_key(|valuation| valuation.valuation_date)
-                        .expect("non-empty history has latest valuation");
-                    if !latest.total_value_base.is_zero() {
-                        return Err(CoreError::Calculation(CalculatorError::Calculation(
-                            format!(
-                                "Incomplete scoped valuation history for account '{}': latest valuation is {}, but scope continues through {}",
-                                account_id, last_date, scope_last_date
-                            ),
-                        )));
-                    }
-                }
+            // WC-44: Track min last_date across non-zero accounts for clamping
+            let latest = history
+                .iter()
+                .max_by_key(|valuation| valuation.valuation_date)
+                .expect("non-empty history has latest valuation");
+            if !latest.total_value_base.is_zero() {
+                min_nonzero_last_date = Some(match min_nonzero_last_date {
+                    Some(current_min) => current_min.min(last_date),
+                    None => last_date,
+                });
             }
         }
 
-        Ok(())
+        Ok(min_nonzero_last_date)
     }
 
     fn split_external_flow(delta: Decimal) -> (Decimal, Decimal) {
@@ -4109,7 +4124,11 @@ mod tests {
     }
 
     #[test]
-    fn scoped_aggregation_rejects_stale_nonzero_account_tail() {
+    fn scoped_aggregation_clamps_end_date_on_trailing_skew() {
+        // WC-44: editing an activity recalcs one account through a later date than
+        // the others. Instead of erroring, the scope end is clamped to the min
+        // last_date across non-zero accounts (here 2026-05-02); a2's 2026-05-03
+        // row is excluded until a1 catches up.
         let histories = vec![
             vec![
                 valuation(
@@ -4158,7 +4177,7 @@ mod tests {
         ];
         let account_ids = vec!["a1".to_string(), "a2".to_string()];
 
-        let err = ValuationService::aggregate_scoped_valuations(
+        let aggregate = ValuationService::aggregate_scoped_valuations(
             "accounts:test",
             &account_ids,
             "USD",
@@ -4166,9 +4185,13 @@ mod tests {
             None,
             None,
         )
-        .expect_err("stale nonzero account tail should be rejected");
+        .expect("trailing skew should clamp, not error");
 
-        assert!(err.to_string().contains("latest valuation is 2026-05-02"));
+        // Scope ends at 2026-05-02 (a1's last date); a2's 2026-05-03 row excluded.
+        assert_eq!(aggregate.len(), 2);
+        assert_eq!(aggregate.last().unwrap().valuation_date.to_string(), "2026-05-02");
+        assert_eq!(aggregate[0].total_value_base, dec!(150));
+        assert_eq!(aggregate[1].total_value_base, dec!(155));
     }
 
     #[test]
