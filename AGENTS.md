@@ -232,4 +232,24 @@ Before completing any task:
 
 ---
 
+## Claude Code Memory Integration
+
+Before planning significant changes, read the memory index at:
+`~/.claude/projects/-Users-danielbrandt-LocalProjects-CascadeProjects-precidix-wealthfolio/memory/MEMORY.md`
+
+Follow relevant links for context on:
+- Local customizations branch features and what must survive upstream merges
+- Known bugs and tech debt (WC-29 split bug, WC-40 sync issues)
+- Upstream merge procedures and checklist
+- Portfolio calculation internals and data-quality diagnostics
+- Dev environment setup (ports, DB paths, build gotchas)
+
+**CRITICAL for upstream merges or local customization changes:**
+Before merging upstream code or modifying any local customization that must survive merges, read and follow:
+`.claude/upstream-merge-checklist.yaml`
+
+This manifest defines must-match patterns for every local feature touchpoint. After any merge, grep each pattern — missing hits indicate silently dropped customizations that must be restored.
+
+---
+
 When in doubt, follow the nearest existing pattern.
