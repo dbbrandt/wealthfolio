@@ -255,6 +255,26 @@ upstream_candidate_fixes:
       Filed 2026-07-09 as wealthfolio/wealthfolio#1262 (cross-referenced #1139).
       If upstream fixes it, take their fix on the next merge instead of ours.
 
+  - id: WC-45
+    commit: 15c48bb7
+    summary: >
+      MarketData.app historical candles were fetched without adjustdividends=false,
+      so they returned MarketData's split- AND dividend-adjusted default. Wealthfolio
+      books DIVIDEND as an internal cash flow counted as return and values holdings at
+      the stored close, so dividend-adjusted closes double-count distributions and
+      overstate TWR for MarketData-priced holdings (the Yahoo provider uses a
+      non-dividend-adjusted close, so the two providers diverged only on dividends).
+      Fixed by appending adjustdividends=false to the candles URL (splits stay
+      adjusted, matching Yahoo). Verified: account 1404 2025 TWR 19.28% -> 16.65%.
+      Merge check: grep 'WC-45' (or 'adjustdividends') in
+      crates/market-data/src/provider/marketdata_app/mod.rs.
+    files:
+      - crates/market-data/src/provider/marketdata_app/mod.rs
+    upstream_status: >
+      Filed 2026-07-11 as wealthfolio/wealthfolio#1284 (issue only, no PR — per user).
+      Upstream main still lacks the adjustdividends param. If upstream fixes it, take
+      their fix on the next merge instead of ours.
+
   - id: provider-priority-save
     commit: 6c917878
     summary: >
