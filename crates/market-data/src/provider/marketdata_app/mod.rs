@@ -262,8 +262,14 @@ impl MarketDataProvider for MarketDataAppProvider {
         let start_str = start.format("%Y-%m-%d").to_string();
         let end_str = end.format("%Y-%m-%d").to_string();
 
+        // WC-45: request split-adjusted but NOT dividend-adjusted closes.
+        // MarketData.app defaults to adjustdividends=true, which back-adjusts historical
+        // prices downward for subsequent distributions. Wealthfolio books dividends as
+        // separate DIVIDEND cash activities (counted as internal gain in TWR), so
+        // dividend-adjusted prices double-count distributions and overstate returns.
+        // adjustsplits stays at its default (true) to match Yahoo's split-adjusted closes.
         let url = format!(
-            "{}/stocks/candles/D/{}?from={}&to={}",
+            "{}/stocks/candles/D/{}?from={}&to={}&adjustdividends=false",
             BASE_URL, symbol, start_str, end_str
         );
 
