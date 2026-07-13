@@ -1,0 +1,21 @@
+date,account,activityType,Symbol,Quantity,unitPrice,amount,Fee,comment
+07/02/2026,Dan IRA - 1402,Split,CRWD,0,0,4,0,"CrowdStrike Holdings, Inc. 4:1 split (backfill #1286)"
+06/18/2025,Dan Inherited IRA - 1411,Split,IBKR,0,0,4,0,"Interactive Brokers Group, Inc. 4:1 split (backfill #1286)"
+10/03/2024,Dan Inherited IRA - 1411,Split,LRCX,0,0,10,0,Lam Research Corporation 10:1 split (backfill #1286)
+10/03/2024,David Roth IRA - 1407,Split,LRCX,0,0,10,0,Lam Research Corporation 10:1 split (backfill #1286)
+03/28/2024,Kristin IRA - 1408,Split,ODFL,0,0,2,0,"Old Dominion Freight Line, Inc. 2:1 split (backfill #1286)"
+06/10/2025,Dan Inherited IRA - 1411,Split,ORLY,0,0,15,0,"O'Reilly Automotive, Inc. 15:1 split (backfill #1286)"
+06/10/2025,David Roth IRA - 1407,Split,ORLY,0,0,15,0,"O'Reilly Automotive, Inc. 15:1 split (backfill #1286)"
+06/10/2025,Kristin IRA - 1408,Split,ORLY,0,0,15,0,"O'Reilly Automotive, Inc. 15:1 split (backfill #1286)"
+06/10/2025,Philip Brandt Trust - 1409,Split,ORLY,0,0,15,0,"O'Reilly Automotive, Inc. 15:1 split (backfill #1286)"
+12/16/2024,David Roth IRA - 1407,Split,PANW,0,0,2,0,"Palo Alto Networks, Inc. 2:1 split (backfill #1286)"
+12/16/2024,Philip Brandt Trust - 1409,Split,PANW,0,0,2,0,"Palo Alto Networks, Inc. 2:1 split (backfill #1286)"
+10/11/2024,Dan IRA - 1402,Split,SCHO,0,0,2,0,Schwab Short-Term U.S. Treasury ETF 2:1 split (backfill #1286)
+10/11/2024,David Roth IRA - 1407,Split,SCHO,0,0,2,0,Schwab Short-Term U.S. Treasury ETF 2:1 split (backfill #1286)
+10/11/2024,Kristin IRA - 1404,Split,SCHO,0,0,2,0,Schwab Short-Term U.S. Treasury ETF 2:1 split (backfill #1286)
+10/11/2024,Philip Brandt Trust - 1409,Split,SCHO,0,0,2,0,Schwab Short-Term U.S. Treasury ETF 2:1 split (backfill #1286)
+04/21/2026,Dan IRA - 1402,Split,VGT,0,0,8,0,Vanguard Information Technology Index Fund ETF Shares 8:1 split (backfill #1286)
+04/21/2026,Kristin IRA - 1404,Split,VUG,0,0,6,0,Vanguard Growth Index Fund ETF Shares 6:1 split (backfill #1286)
+12/05/2025,Dan IRA - 1402,Split,XLE,0,0,2,0,State Street Energy Select Sector SPDR ETF 2:1 split (backfill #1286)
+12/05/2025,Kristin IRA - 1404,Split,XLE,0,0,2,0,State Street Energy Select Sector SPDR ETF 2:1 split (backfill #1286)
+12/05/2025,Dan IRA - 1402,Split,XLY,0,0,2,0,State Street Consumer Discretionary Select Sector SPDR ETF 2:1 split (backfill #1286)
