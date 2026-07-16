@@ -25,6 +25,7 @@ import {
   HoverCardTrigger,
   Icons,
   IntervalSelector,
+  PriceDisplay,
   Tooltip,
   TooltipContent,
   TooltipProvider,
@@ -32,6 +33,7 @@ import {
 } from "@wealthfolio/ui";
 import { format, subMonths } from "date-fns";
 import React, { useCallback, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ASSET_MARKER_ACTIVITY_TYPES,
   activityMarkerLabel,
@@ -60,6 +62,7 @@ const AssetHistoryCard: React.FC<AssetHistoryProps> = ({
   assetId,
   className,
 }) => {
+  const { t } = useTranslation();
   const syncMarketDataMutation = useSyncMarketDataMutation(true);
   const { isBalanceHidden } = useBalancePrivacy();
   const [refreshConfirmOpen, setRefreshConfirmOpen] = useState(false);
@@ -185,7 +188,7 @@ const AssetHistoryCard: React.FC<AssetHistoryProps> = ({
               <HoverCardTrigger asChild className="cursor-pointer">
                 <div>
                   <p className="pt-3 text-xl font-bold">
-                    <AmountDisplay
+                    <PriceDisplay
                       value={marketPrice}
                       currency={currency}
                       isHidden={isBalanceHidden}
@@ -197,7 +200,7 @@ const AssetHistoryCard: React.FC<AssetHistoryProps> = ({
                       currency={currency}
                       isHidden={isBalanceHidden}
                     />{" "}
-                    ({percentage == null ? "N/A" : formatPercent(percentage)}){" "}
+                    ({percentage == null ? t("asset:historyCard.na") : formatPercent(percentage)}){" "}
                     {selectedIntervalDesc}
                   </p>
                 </div>
@@ -207,7 +210,7 @@ const AssetHistoryCard: React.FC<AssetHistoryProps> = ({
                   <div className="space-y-2">
                     <h4 className="flex text-sm font-light">
                       <Icons.Calendar className="mr-2 h-4 w-4" />
-                      As of:{" "}
+                      {t("asset:historyCard.as_of")}{" "}
                       <Badge className="ml-1 font-medium" variant="secondary">
                         {calculatedAt ? `${format(new Date(calculatedAt), "PPpp")}` : "-"}
                       </Badge>
@@ -225,7 +228,9 @@ const AssetHistoryCard: React.FC<AssetHistoryProps> = ({
                     ) : (
                       <Icons.Refresh className="mr-2 h-4 w-4" />
                     )}
-                    {syncMarketDataMutation.isPending ? "Refreshing quotes..." : "Refresh Quotes"}
+                    {syncMarketDataMutation.isPending
+                      ? t("asset:historyCard.refreshing_quotes")
+                      : t("asset:historyCard.refresh_quotes")}
                   </Button>
                 </div>
               </HoverCardContent>
@@ -241,14 +246,21 @@ const AssetHistoryCard: React.FC<AssetHistoryProps> = ({
                     className={cn("rounded-full", !showActivityMarkers && "bg-secondary/50")}
                     onClick={() => setShowActivityMarkers((current) => !current)}
                     aria-label={
-                      showActivityMarkers ? "Hide activity markers" : "Show activity markers"
+                      showActivityMarkers
+                        ? t("asset:historyCard.hide_activity_markers")
+                        : t("asset:historyCard.show_activity_markers")
                     }
                   >
                     <Icons.History className="size-5" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>
-                  <p>{showActivityMarkers ? "Hide" : "Show"} activity markers</p>
+                  <p>
+                    {showActivityMarkers
+                      ? t("asset:historyCard.hide")
+                      : t("asset:historyCard.show")}{" "}
+                    {t("asset:historyCard.activity_markers_suffix")}
+                  </p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>

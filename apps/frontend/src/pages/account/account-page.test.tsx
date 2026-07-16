@@ -457,7 +457,7 @@ describe("AccountPage", () => {
       mode: "infinite",
       filters: { accountIds: ["account-1"] },
     });
-    expect(screen.getByRole("link", { name: /Explore activities/i })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /Explore/i })).toHaveAttribute(
       "href",
       "/activities?account=account-1",
     );
@@ -468,10 +468,10 @@ function createSettings(): Settings {
   return {
     theme: "light",
     font: "font-sans",
+    language: "en",
     baseCurrency: "USD",
     defaultReturnMetric: "twr",
     timezone: "America/Chicago",
-    instanceId: "test-instance",
     onboardingCompleted: true,
     autoUpdateCheckEnabled: true,
     menuBarVisible: true,

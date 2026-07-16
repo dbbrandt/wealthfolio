@@ -1,6 +1,7 @@
 // useGlobalEventListener.ts
 import {
   isDesktop,
+  listenAssetClassificationsChanged,
   listenBrokerSyncComplete,
   listenBrokerSyncError,
   listenDatabaseRestored,
@@ -14,7 +15,11 @@ import {
 } from "@/adapters";
 import { usePortfolioSyncOptional } from "@/context/portfolio-sync-context";
 import { useIsMobileViewport } from "@/hooks/use-platform";
-import { shouldInvalidateAfterPortfolioUpdate } from "@/lib/query-invalidation";
+import {
+  invalidateAfterAssetClassificationsChanged,
+  shouldInvalidateAfterPortfolioUpdate,
+  type AssetClassificationsChangedPayload,
+} from "@/lib/query-invalidation";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -22,6 +27,7 @@ import { toast } from "sonner";
 
 const TOAST_IDS = {
   marketSyncStart: "market-sync-start",
+  marketSyncError: "market-sync-error",
   portfolioUpdateStart: "portfolio-update-start",
   portfolioUpdateError: "portfolio-update-error",
 
@@ -36,10 +42,15 @@ const POST_LOGIN_REQUIRED_LISTENERS = new Set(["broker-sync-complete", "broker-s
 interface MarketSyncCompletePayload {
   failed_syncs?: [string, string][];
   skipped_reasons?: [string, string][];
+  show_skipped_reasons?: boolean;
 }
 
 function getSyncFailures(payload?: MarketSyncCompletePayload | null): [string, string][] {
   return Array.isArray(payload?.failed_syncs) ? payload.failed_syncs : [];
+}
+
+function getSyncSkips(payload?: MarketSyncCompletePayload | null): [string, string][] {
+  return Array.isArray(payload?.skipped_reasons) ? payload.skipped_reasons : [];
 }
 
 const useGlobalEventListener = () => {
@@ -82,6 +93,7 @@ const useGlobalEventListener = () => {
 
     const handleMarketSyncComplete = (event: { payload: MarketSyncCompletePayload | null }) => {
       const failed_syncs = getSyncFailures(event.payload);
+      const skipped_reasons = getSyncSkips(event.payload);
 
       if (isMobileViewportRef.current && syncContextRef.current) {
         syncContextRef.current.setIdle();
@@ -93,7 +105,21 @@ const useGlobalEventListener = () => {
       if (failed_syncs && failed_syncs.length > 0) {
         const count = failed_syncs.length;
         toast.error(`Price update failed for ${count} asset${count === 1 ? "" : "s"}`, {
-          id: "market-sync-error",
+          id: TOAST_IDS.marketSyncError,
+          duration: 10000,
+          action: {
+            label: "View",
+            onClick: () => navigateRef.current("/health"),
+          },
+        });
+      }
+
+      if (event.payload?.show_skipped_reasons && skipped_reasons.length > 0) {
+        const count = skipped_reasons.length;
+        const reasons = [...new Set(skipped_reasons.map(([, reason]) => reason))];
+        toast.warning(`Price update skipped for ${count} asset${count === 1 ? "" : "s"}`, {
+          id: "market-sync-skipped",
+          description: reasons.slice(0, 2).join("; "),
           duration: 10000,
           action: {
             label: "View",
@@ -111,6 +137,7 @@ const useGlobalEventListener = () => {
         toast.dismiss(TOAST_IDS.marketSyncStart);
       }
       toast.error("Market Data Sync Failed", {
+        id: TOAST_IDS.marketSyncError,
         description: `${errorMsg}. Please try again later.`,
         duration: 10000,
       });
@@ -159,6 +186,12 @@ const useGlobalEventListener = () => {
       toast.success("Database restored successfully", {
         description: "Please restart the application to ensure all data is properly refreshed.",
       });
+    };
+
+    const handleAssetClassificationsChanged = (event: {
+      payload: AssetClassificationsChangedPayload | null;
+    }) => {
+      invalidateAfterAssetClassificationsChanged(queryClientRef.current, event.payload);
     };
 
     const handleBrokerSyncComplete = (event: {
@@ -277,6 +310,10 @@ const useGlobalEventListener = () => {
         ["market-sync-start", listenMarketSyncStart(handleMarketSyncStart)],
         ["market-sync-complete", listenMarketSyncComplete(handleMarketSyncComplete)],
         ["market-sync-error", listenMarketSyncError(handleMarketSyncError)],
+        [
+          "asset-classifications-changed",
+          listenAssetClassificationsChanged(handleAssetClassificationsChanged),
+        ],
         ["database-restored", listenDatabaseRestored(handleDatabaseRestored)],
         ["broker-sync-complete", listenBrokerSyncComplete(handleBrokerSyncComplete)],
         ["broker-sync-error", listenBrokerSyncError(handleBrokerSyncError)],

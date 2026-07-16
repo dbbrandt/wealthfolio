@@ -23,9 +23,9 @@ use crate::activities::{
 };
 use crate::assets::{
     canonicalize_market_identity, normalize_quote_ccy_code, parse_crypto_pair_symbol,
-    parse_symbol_with_exchange_suffix, resolve_quote_ccy_precedence, AssetKind,
-    AssetResolutionInput as ImportAssetResolutionInput, AssetServiceTrait, InstrumentType,
-    QuoteCcyResolutionSource, QuoteMode,
+    parse_symbol_with_exchange_suffix, resolve_import_quote_ccy_precedence,
+    resolve_quote_ccy_precedence, AssetKind, AssetResolutionInput as ImportAssetResolutionInput,
+    AssetServiceTrait, InstrumentType, QuoteCcyResolutionSource, QuoteMode,
 };
 use crate::errors::{DatabaseError, Error};
 use crate::events::{DomainEvent, DomainEventSink, NoOpDomainEventSink};
@@ -134,6 +134,7 @@ impl ActivityService {
         activity.unit_price = activity.unit_price.map(|v| v.abs());
         activity.amount = activity.amount.map(|v| v.abs());
         activity.fee = activity.fee.map(|v| v.abs());
+        activity.tax = activity.tax.map(|v| v.abs());
     }
 
     fn hydrate_and_validate_update_against_existing(
@@ -147,7 +148,10 @@ impl ActivityService {
             .map(str::trim)
             .is_some_and(|subtype| !subtype.is_empty())
         {
-            activity.subtype = NewActivity::canonicalize_subtype(activity.subtype.as_deref());
+            activity.subtype = NewActivity::canonicalize_subtype_for_activity(
+                &activity.activity_type,
+                activity.subtype.as_deref(),
+            );
         }
 
         let effective_subtype = match activity.subtype.as_deref().map(str::trim) {
@@ -216,6 +220,7 @@ impl ActivityService {
             || Self::decimal_patch_changes(activity.quantity, existing.quantity)
             || Self::decimal_patch_changes(activity.unit_price, existing.unit_price)
             || Self::decimal_patch_changes(activity.fee, existing.fee)
+            || Self::decimal_patch_changes(activity.tax, existing.tax)
             || Self::decimal_patch_changes(activity.fx_rate, existing.fx_rate)
     }
 
@@ -245,7 +250,10 @@ impl ActivityService {
     }
 
     fn normalize_activity_for_preparation(mut activity: NewActivity) -> NewActivity {
-        activity.subtype = NewActivity::canonicalize_subtype(activity.subtype.as_deref());
+        activity.subtype = NewActivity::canonicalize_subtype_for_activity(
+            &activity.activity_type,
+            activity.subtype.as_deref(),
+        );
         Self::normalize_new_activity_economic_signs(&mut activity);
         activity
     }
@@ -619,6 +627,43 @@ impl ActivityService {
             currencies,
             earliest_activity_at_utc,
         ));
+    }
+
+    fn emit_asset_split_activities_changed<'a>(
+        &self,
+        activities: impl IntoIterator<Item = &'a Activity>,
+    ) {
+        let split_activities: Vec<&Activity> = activities
+            .into_iter()
+            .filter(|activity| activity.effective_type() == ACTIVITY_TYPE_SPLIT)
+            .collect();
+        let asset_ids: HashSet<String> = split_activities
+            .iter()
+            .filter_map(|activity| activity.asset_id.clone())
+            .collect();
+        if asset_ids.is_empty() {
+            return;
+        }
+
+        self.event_sink
+            .emit(DomainEvent::asset_split_activities_changed(
+                asset_ids.into_iter().collect(),
+                Self::earliest_activity_at_utc(split_activities),
+            ));
+    }
+
+    fn emit_asset_split_change(
+        &self,
+        asset_ids: Vec<String>,
+        earliest_activity_at_utc: Option<DateTime<Utc>>,
+    ) {
+        if !asset_ids.is_empty() {
+            self.event_sink
+                .emit(DomainEvent::asset_split_activities_changed(
+                    asset_ids,
+                    earliest_activity_at_utc,
+                ));
+        }
     }
 
     /// Sets the domain event sink for this service.
@@ -1048,6 +1093,7 @@ impl ActivityService {
                 unit_price: None,
                 currency: values.source_currency.clone(),
                 fee: None,
+                tax: None,
                 amount: Some(values.source_amount),
                 status: None,
                 notes: request.notes.clone(),
@@ -1071,6 +1117,7 @@ impl ActivityService {
                 unit_price: None,
                 currency: values.destination_currency.clone(),
                 fee: None,
+                tax: None,
                 amount: Some(values.destination_amount),
                 status: None,
                 notes: request.notes.clone(),
@@ -1105,6 +1152,7 @@ impl ActivityService {
                 unit_price: Some(None),
                 currency: values.source_currency.clone(),
                 fee: Some(None),
+                tax: Some(None),
                 amount: Some(Some(values.source_amount)),
                 status: None,
                 notes: request.notes.clone(),
@@ -1122,6 +1170,7 @@ impl ActivityService {
                 unit_price: Some(None),
                 currency: values.destination_currency.clone(),
                 fee: Some(None),
+                tax: Some(None),
                 amount: Some(Some(values.destination_amount)),
                 status: None,
                 notes: request.notes.clone(),
@@ -1156,6 +1205,7 @@ impl ActivityService {
             unit_price: None,
             currency: counterpart.currency.clone(),
             fee: None,
+            tax: None,
             amount: None,
             status: None,
             notes: update.notes.clone(),
@@ -1250,7 +1300,7 @@ impl ActivityService {
         // Normalize to absolute values and major currencies, matching what
         // prepare_activities_internal does before the apply-step key computation.
         let quantity = activity.quantity.map(|v| v.abs());
-        let (unit_price, amount, currency) =
+        let (unit_price, amount, fee, currency) =
             if let Some(rule) = get_normalization_rule(activity.currency.as_str()) {
                 let unit_price = activity
                     .unit_price
@@ -1258,7 +1308,10 @@ impl ActivityService {
                 let amount = activity
                     .amount
                     .map(|v| normalize_amount(v.abs(), activity.currency.as_str()).0);
-                (unit_price, amount, rule.major_code)
+                let fee = activity
+                    .fee
+                    .map(|v| normalize_amount(v.abs(), activity.currency.as_str()).0);
+                (unit_price, amount, fee, rule.major_code)
             } else {
                 let ccy = if activity.currency.trim().is_empty() {
                     "USD"
@@ -1268,6 +1321,7 @@ impl ActivityService {
                 (
                     activity.unit_price.map(|v| v.abs()),
                     activity.amount.map(|v| v.abs()),
+                    activity.fee.map(|v| v.abs()),
                     ccy,
                 )
             };
@@ -1280,6 +1334,7 @@ impl ActivityService {
             quantity,
             unit_price,
             amount,
+            fee,
             currency,
             None,
             activity.comment.as_deref(),
@@ -1847,7 +1902,10 @@ impl ActivityService {
     }
 
     async fn prepare_new_activity(&self, mut activity: NewActivity) -> Result<NewActivity> {
-        activity.subtype = NewActivity::canonicalize_subtype(activity.subtype.as_deref());
+        activity.subtype = NewActivity::canonicalize_subtype_for_activity(
+            &activity.activity_type,
+            activity.subtype.as_deref(),
+        );
         Self::normalize_new_activity_economic_signs(&mut activity);
         let account: Account = self.account_service.get_account(&activity.account_id)?;
         Self::validate_activity_allowed_for_account(&activity.activity_type, &account)?;
@@ -2223,23 +2281,31 @@ impl ActivityService {
 
         // Normalize minor currency units (e.g., GBp -> GBP) and convert amounts
         if get_normalization_rule(&activity.currency).is_some() {
+            let input_currency = activity.currency.clone();
+            let mut normalized_currency = activity.currency.clone();
             if let Some(unit_price) = activity.unit_price {
-                let (normalized_price, _) = normalize_amount(unit_price, &activity.currency);
+                let (normalized_price, _) = normalize_amount(unit_price, &input_currency);
                 activity.unit_price = Some(normalized_price);
             }
             if let Some(amount) = activity.amount {
-                let (normalized_amount, _) = normalize_amount(amount, &activity.currency);
+                let (normalized_amount, _) = normalize_amount(amount, &input_currency);
                 activity.amount = Some(normalized_amount);
             }
             if let Some(fee) = activity.fee {
-                let (normalized_fee, normalized_currency) =
-                    normalize_amount(fee, &activity.currency);
+                let (normalized_fee, currency) = normalize_amount(fee, &input_currency);
                 activity.fee = Some(normalized_fee);
-                activity.currency = normalized_currency.to_string();
-            } else {
-                let (_, normalized_currency) = normalize_amount(Decimal::ZERO, &activity.currency);
-                activity.currency = normalized_currency.to_string();
+                normalized_currency = currency.to_string();
             }
+            if let Some(tax) = activity.tax {
+                let (normalized_tax, currency) = normalize_amount(tax, &input_currency);
+                activity.tax = Some(normalized_tax);
+                normalized_currency = currency.to_string();
+            }
+            if activity.fee.is_none() && activity.tax.is_none() {
+                let (_, currency) = normalize_amount(Decimal::ZERO, &input_currency);
+                normalized_currency = currency.to_string();
+            }
+            activity.currency = normalized_currency;
         }
 
         // Preserve explicit idempotency key when provided (e.g., intentional manual duplicates).
@@ -2268,6 +2334,7 @@ impl ActivityService {
                 activity.quantity,
                 activity.unit_price,
                 activity.amount,
+                activity.fee,
                 &activity.currency,
                 activity.source_record_id.as_deref(),
                 activity.notes.as_deref(),
@@ -2636,6 +2703,7 @@ impl ActivityService {
         activity.unit_price = activity.unit_price.map(|v| v.map(|d| d.abs()));
         activity.amount = activity.amount.map(|v| v.map(|d| d.abs()));
         activity.fee = activity.fee.map(|v| v.map(|d| d.abs()));
+        activity.tax = activity.tax.map(|v| v.map(|d| d.abs()));
 
         // Securities transfers derive value from quantity × unit_price; clear
         // `amount` on update only when the patch carries a unit_price so callers
@@ -2650,24 +2718,31 @@ impl ActivityService {
 
         // Normalize minor currency units
         if get_normalization_rule(&activity.currency).is_some() {
+            let input_currency = activity.currency.clone();
+            let mut normalized_currency = activity.currency.clone();
             if let Some(Some(unit_price)) = activity.unit_price {
-                let (normalized_price, _) = normalize_amount(unit_price, &activity.currency);
+                let (normalized_price, _) = normalize_amount(unit_price, &input_currency);
                 activity.unit_price = Some(Some(normalized_price));
             }
             if let Some(Some(amount)) = activity.amount {
-                let (normalized_amount, _) = normalize_amount(amount, &activity.currency);
+                let (normalized_amount, _) = normalize_amount(amount, &input_currency);
                 activity.amount = Some(Some(normalized_amount));
             }
             if let Some(Some(fee)) = activity.fee {
-                let (normalized_fee, normalized_currency) =
-                    normalize_amount(fee, &activity.currency);
+                let (normalized_fee, currency) = normalize_amount(fee, &input_currency);
                 activity.fee = Some(Some(normalized_fee));
-                activity.currency = normalized_currency.to_string();
-            } else {
-                let (_, normalized_currency) =
-                    normalize_amount(rust_decimal::Decimal::ZERO, &activity.currency);
-                activity.currency = normalized_currency.to_string();
+                normalized_currency = currency.to_string();
             }
+            if let Some(Some(tax)) = activity.tax {
+                let (normalized_tax, currency) = normalize_amount(tax, &input_currency);
+                activity.tax = Some(Some(normalized_tax));
+                normalized_currency = currency.to_string();
+            }
+            if !matches!(activity.fee, Some(Some(_))) && !matches!(activity.tax, Some(Some(_))) {
+                let (_, currency) = normalize_amount(rust_decimal::Decimal::ZERO, &input_currency);
+                normalized_currency = currency.to_string();
+            }
+            activity.currency = normalized_currency;
         }
 
         Ok(activity)
@@ -2981,7 +3056,10 @@ impl ActivityService {
     }
 
     fn normalize_import_activity_subtype(activity: &mut ActivityImport) {
-        activity.subtype = NewActivity::canonicalize_subtype(activity.subtype.as_deref());
+        activity.subtype = NewActivity::canonicalize_subtype_for_activity(
+            &activity.activity_type,
+            activity.subtype.as_deref(),
+        );
         if activity
             .subtype
             .as_deref()
@@ -3092,17 +3170,14 @@ impl ActivityService {
                     return None;
                 }
 
-                let ccy = if a.currency.is_empty() {
-                    account_currency.clone()
-                } else {
-                    a.currency.clone()
-                };
-                let input_key = import_asset_resolution_key(a, &ccy);
+                let activity_currency = a.currency.trim();
+                let input_key = import_asset_resolution_key(a, activity_currency);
                 Some(ImportAssetResolutionInput {
                     key: input_key,
                     source_symbol: a.symbol.clone(),
                     account_currency: account_currency.clone(),
-                    activity_currency: Some(ccy),
+                    activity_currency: (!activity_currency.is_empty())
+                        .then(|| activity_currency.to_string()),
                     exchange_mic: a.exchange_mic.clone(),
                     quote_ccy: a.quote_ccy.clone(),
                     instrument_type: Self::parse_instrument_type(a.instrument_type.as_deref()),
@@ -3220,12 +3295,7 @@ impl ActivityService {
                 }
             }
 
-            let resolve_ccy = if activity.currency.is_empty() {
-                account_currency.clone()
-            } else {
-                activity.currency.clone()
-            };
-            let resolution_key = import_asset_resolution_key(&activity, &resolve_ccy);
+            let resolution_key = import_asset_resolution_key(&activity, activity.currency.trim());
             let asset_resolution = asset_resolution_cache.get(&resolution_key);
             let resolution_quote_ccy = asset_resolution
                 .and_then(|output| output.quote_ccy.clone())
@@ -3238,6 +3308,12 @@ impl ActivityService {
                 .or_else(|| asset_resolution.and_then(|output| output.exchange_mic.clone()));
 
             let (base_symbol, suffix_mic) = parse_symbol_with_exchange_suffix(&symbol);
+            let has_import_market_hint = activity
+                .exchange_mic
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|mic| !mic.is_empty())
+                || suffix_mic.is_some();
             let resolved_mic = activity
                 .exchange_mic
                 .clone()
@@ -3388,7 +3464,15 @@ impl ActivityService {
                 } else {
                     activity.currency.as_str()
                 };
-                let explicit_quote_ccy = Self::normalize_quote_ccy(activity.quote_ccy.as_deref());
+                let resolution_explicit_quote_ccy = if resolution_quote_ccy_source
+                    == Some(QuoteCcyResolutionSource::ExplicitInput)
+                {
+                    resolution_quote_ccy.as_deref()
+                } else {
+                    None
+                };
+                let explicit_quote_ccy = Self::normalize_quote_ccy(activity.quote_ccy.as_deref())
+                    .or_else(|| Self::normalize_quote_ccy(resolution_explicit_quote_ccy));
 
                 let (resolved_quote_ccy, resolution_source) = if matches!(
                     effective_instrument_type,
@@ -3409,6 +3493,9 @@ impl ActivityService {
                     )
                     .await
                 } else {
+                    let activity_quote_ccy = (has_import_market_hint
+                        && !activity.currency.trim().is_empty())
+                    .then_some(activity.currency.as_str());
                     let has_deterministic = normalize_quote_ccy_code(explicit_quote_ccy.as_deref())
                         .is_some()
                         || normalize_quote_ccy_code(asset_currency.as_deref()).is_some();
@@ -3434,9 +3521,10 @@ impl ActivityService {
                     } else {
                         resolved_mic.as_deref().and_then(mic_to_currency)
                     };
-                    resolve_quote_ccy_precedence(
+                    resolve_import_quote_ccy_precedence(
                         explicit_quote_ccy.as_deref(),
                         asset_currency.as_deref(),
+                        activity_quote_ccy,
                         provider_ccy.as_deref(),
                         mic_fallback_ccy,
                         Some(terminal_fallback),
@@ -3627,6 +3715,7 @@ impl ActivityServiceTrait for ActivityService {
         date_from: Option<NaiveDate>,
         date_to: Option<NaiveDate>,
         instrument_type_filter: Option<Vec<String>>,
+        activity_id_filter: Option<Vec<String>>,
     ) -> Result<ActivitySearchResponse> {
         self.activity_repository.search_activities(
             page,
@@ -3639,6 +3728,7 @@ impl ActivityServiceTrait for ActivityService {
             date_from,
             date_to,
             instrument_type_filter,
+            activity_id_filter,
         )
     }
 
@@ -3656,6 +3746,7 @@ impl ActivityServiceTrait for ActivityService {
         date_from_utc: Option<DateTime<Utc>>,
         date_to_utc_exclusive: Option<DateTime<Utc>>,
         instrument_type_filter: Option<Vec<String>>,
+        activity_id_filter: Option<Vec<String>>,
     ) -> Result<ActivitySearchResponse> {
         self.activity_repository.search_activities_in_utc_range(
             page,
@@ -3668,6 +3759,7 @@ impl ActivityServiceTrait for ActivityService {
             date_from_utc,
             date_to_utc_exclusive,
             instrument_type_filter,
+            activity_id_filter,
         )
     }
 
@@ -3690,6 +3782,7 @@ impl ActivityServiceTrait for ActivityService {
             currencies,
             Some(created.activity_date),
         );
+        self.emit_asset_split_activities_changed(std::iter::once(&created));
 
         Ok(created)
     }
@@ -3812,6 +3905,7 @@ impl ActivityServiceTrait for ActivityService {
                     unit_price: None,
                     currency: updated.currency.clone(),
                     fee: None,
+                    tax: None,
                     amount: Some(updated.amount),
                     status: Some(counterpart.status.clone()),
                     notes: updated.notes.clone(),
@@ -3837,6 +3931,7 @@ impl ActivityServiceTrait for ActivityService {
             currencies,
             Some(earliest_activity_at_utc),
         );
+        self.emit_asset_split_activities_changed([&existing, &updated]);
 
         Ok(updated)
     }
@@ -3895,6 +3990,7 @@ impl ActivityServiceTrait for ActivityService {
             currencies,
             Some(deleted.activity_date),
         );
+        self.emit_asset_split_activities_changed(std::iter::once(&deleted));
 
         Ok(deleted)
     }
@@ -4156,6 +4252,7 @@ impl ActivityServiceTrait for ActivityService {
         let mut old_asset_ids: HashSet<String> = HashSet::new();
         let mut old_currencies: HashSet<String> = HashSet::new();
         let mut old_activity_dates: Vec<DateTime<Utc>> = Vec::new();
+        let mut old_activities: Vec<Activity> = Vec::new();
 
         let explicit_update_ids: HashSet<String> = request
             .updates
@@ -4268,6 +4365,7 @@ impl ActivityServiceTrait for ActivityService {
                     }
                     old_currencies.insert(existing.currency.clone());
                     old_activity_dates.push(existing.activity_date);
+                    old_activities.push(existing.clone());
                     if let Err(err) = self.hydrate_and_validate_update_against_existing(
                         &mut update_request,
                         &existing,
@@ -4307,6 +4405,7 @@ impl ActivityServiceTrait for ActivityService {
                     }
                     old_currencies.insert(existing.currency.clone());
                     old_activity_dates.push(existing.activity_date);
+                    old_activities.push(existing.clone());
                     valid_delete_ids.push(delete_id.clone());
                 }
                 Err(err) => {
@@ -4386,6 +4485,13 @@ impl ActivityServiceTrait for ActivityService {
                 earliest_activity_at_utc,
             );
         }
+        self.emit_asset_split_activities_changed(
+            old_activities
+                .iter()
+                .chain(persisted.created.iter())
+                .chain(persisted.updated.iter())
+                .chain(persisted.deleted.iter()),
+        );
 
         Ok(persisted)
     }
@@ -4679,7 +4785,7 @@ impl ActivityServiceTrait for ActivityService {
 
         // ── 3.5: Lightweight pre-insert validation (no asset/FX resolution) ───
         // Catches rows that slipped through the review step without proper resolution.
-        // date errors → "symbol" to match frontend field-keying convention.
+        // Use the review-grid field key so invalid dates highlight the date cell.
         let mut has_validation_errors = false;
         for (_, activity) in import_activities_indexed.iter_mut() {
             let has_symbol = !activity.symbol.trim().is_empty();
@@ -4701,7 +4807,7 @@ impl ActivityServiceTrait for ActivityService {
                 activity.is_valid = false;
                 Self::add_activity_error(
                     activity,
-                    "symbol",
+                    "activityDate",
                     &format!("Invalid date '{}'.", activity.date),
                 );
                 has_validation_errors = true;
@@ -4811,7 +4917,10 @@ impl ActivityServiceTrait for ActivityService {
             .collect();
 
         for (new_act, src) in new_activities.iter_mut().zip(source_slice.iter()) {
-            new_act.subtype = NewActivity::canonicalize_subtype(new_act.subtype.as_deref());
+            new_act.subtype = NewActivity::canonicalize_subtype_for_activity(
+                &new_act.activity_type,
+                new_act.subtype.as_deref(),
+            );
             Self::normalize_new_activity_economic_signs(new_act);
             new_act.idempotency_key = Self::build_import_idempotency_key(src, &new_act.account_id);
         }
@@ -5015,6 +5124,13 @@ impl ActivityServiceTrait for ActivityService {
             .into_iter()
             .collect();
         let earliest_at = Self::earliest_new_activity_at_utc(insertable_new_activities.iter());
+        let split_asset_ids: Vec<String> = insertable_new_activities
+            .iter()
+            .filter(|activity| activity.activity_type == ACTIVITY_TYPE_SPLIT)
+            .filter_map(|activity| activity.get_symbol_id().map(str::to_string))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
 
         // ── 9. Insert all non-duplicate activities in one transaction ────────
         let inserted_count = if insertable_new_activities.is_empty() {
@@ -5061,6 +5177,7 @@ impl ActivityServiceTrait for ActivityService {
         // ── 11. Emit events + build ordered result ────────────────────────────
         if inserted_count > 0 {
             self.emit_activities_changed(account_ids, asset_ids, currencies, earliest_at);
+            self.emit_asset_split_change(split_asset_ids, earliest_at);
         }
 
         for (idx, activity) in import_activities_indexed {
@@ -5327,6 +5444,13 @@ impl ActivityServiceTrait for ActivityService {
         }
 
         let earliest_activity_at_utc = Self::earliest_upsert_activity_at_utc(&activities);
+        let split_asset_ids: Vec<String> = activities
+            .iter()
+            .filter(|activity| activity.activity_type == ACTIVITY_TYPE_SPLIT)
+            .filter_map(|activity| activity.asset_id.clone())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
 
         // Collect unique account_ids, asset_ids, and currencies for the event before the upsert
         let account_ids: Vec<String> = activities
@@ -5360,6 +5484,15 @@ impl ActivityServiceTrait for ActivityService {
                 currencies,
                 earliest_activity_at_utc,
             );
+            // Include pre-existing SPLIT rows that this upsert overwrote (possibly
+            // reclassified or moved to another asset), not just incoming SPLIT rows.
+            let split_asset_ids: Vec<String> = split_asset_ids
+                .into_iter()
+                .chain(result.updated_split_asset_ids.iter().cloned())
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect();
+            self.emit_asset_split_change(split_asset_ids, earliest_activity_at_utc);
         }
 
         Ok(result)
@@ -5709,6 +5842,7 @@ impl ActivityService {
             activity.unit_price = activity.unit_price.map(|v| v.abs());
             activity.amount = activity.amount.map(|v| v.abs());
             activity.fee = activity.fee.map(|v| v.abs());
+            activity.tax = activity.tax.map(|v| v.abs());
 
             if let Err(e) = Self::validate_split_ratio(&activity.activity_type, activity.amount) {
                 if mode.is_sync() {
@@ -5740,22 +5874,29 @@ impl ActivityService {
 
             // Normalize minor currency units (e.g., GBp -> GBP) and convert amounts
             if get_normalization_rule(&activity.currency).is_some() {
+                let input_currency = activity.currency.clone();
                 if let Some(unit_price) = activity.unit_price {
-                    let (normalized_price, _) = normalize_amount(unit_price, &activity.currency);
+                    let (normalized_price, _) = normalize_amount(unit_price, &input_currency);
                     activity.unit_price = Some(normalized_price);
                 }
                 if let Some(amount) = activity.amount {
-                    let (normalized_amount, _) = normalize_amount(amount, &activity.currency);
+                    let (normalized_amount, _) = normalize_amount(amount, &input_currency);
                     activity.amount = Some(normalized_amount);
                 }
                 if let Some(fee) = activity.fee {
                     let (normalized_fee, normalized_currency) =
-                        normalize_amount(fee, &activity.currency);
+                        normalize_amount(fee, &input_currency);
                     activity.fee = Some(normalized_fee);
                     activity.currency = normalized_currency.to_string();
-                } else {
-                    let (_, normalized_currency) =
-                        normalize_amount(Decimal::ZERO, &activity.currency);
+                }
+                if let Some(tax) = activity.tax {
+                    let (normalized_tax, normalized_currency) =
+                        normalize_amount(tax, &input_currency);
+                    activity.tax = Some(normalized_tax);
+                    activity.currency = normalized_currency.to_string();
+                }
+                if activity.fee.is_none() && activity.tax.is_none() {
+                    let (_, normalized_currency) = normalize_amount(Decimal::ZERO, &input_currency);
                     activity.currency = normalized_currency.to_string();
                 }
             }
@@ -5784,6 +5925,7 @@ impl ActivityService {
                     activity.quantity,
                     activity.unit_price,
                     activity.amount,
+                    activity.fee,
                     &activity.currency,
                     activity.source_record_id.as_deref(),
                     activity.notes.as_deref(),
@@ -6137,6 +6279,7 @@ mod reviewed_import_metadata_tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: None,
+            tax: None,
             amount: None,
             comment: None,
             account_id: None,

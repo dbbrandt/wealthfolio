@@ -18,10 +18,11 @@ pub trait HoldingsValuationServiceTrait: Send + Sync {
     async fn calculate_holdings_live_valuation(&self, holdings: &mut [Holding]) -> Result<()>;
 }
 
-fn gain_pct_from_basis(amount_base: Decimal, basis_base: Decimal) -> Option<Decimal> {
-    if basis_base > Decimal::ZERO {
-        Some((amount_base / basis_base).round_dp(4))
-    } else if amount_base.is_zero() {
+fn gain_pct_from_basis(amount: Decimal, basis: Decimal) -> Option<Decimal> {
+    let exposure = basis.abs();
+    if exposure > Decimal::ZERO {
+        Some((amount / exposure).round_dp(4))
+    } else if amount.is_zero() {
         Some(Decimal::ZERO)
     } else {
         None
@@ -270,11 +271,7 @@ impl HoldingsValuationService {
                     local: neg_local,
                     base: neg_base,
                 });
-                if cost_basis.base != Decimal::ZERO {
-                    holding.unrealized_gain_pct = Some(dec!(-1));
-                } else {
-                    holding.unrealized_gain_pct = Some(Decimal::ZERO);
-                }
+                holding.unrealized_gain_pct = gain_pct_from_basis(neg_local, cost_basis.local);
             } else {
                 holding.unrealized_gain = None;
                 holding.unrealized_gain_pct = None;
@@ -343,7 +340,7 @@ impl HoldingsValuationService {
                 });
 
                 holding.unrealized_gain_pct =
-                    gain_pct_from_basis(unrealized_gain_base, cost_basis_base);
+                    gain_pct_from_basis(unrealized_gain_local, cost_basis.local);
             } else {
                 holding.unrealized_gain = None;
                 holding.unrealized_gain_pct = None;
@@ -381,9 +378,10 @@ impl HoldingsValuationService {
                         base: day_change_base,
                     });
 
-                    if prev_value_base != dec!(0) {
+                    let prev_exposure_base = prev_value_base.abs();
+                    if prev_exposure_base != dec!(0) {
                         holding.day_change_pct =
-                            Some((day_change_base / prev_value_base).round_dp(4));
+                            Some((day_change_base / prev_exposure_base).round_dp(4));
                     } else if day_change_base != dec!(0) {
                         holding.day_change_pct = None;
                     } else {
@@ -555,7 +553,7 @@ impl HoldingsValuationService {
                 });
 
                 holding.unrealized_gain_pct =
-                    gain_pct_from_basis(unrealized_gain_base, total_cost_base);
+                    gain_pct_from_basis(unrealized_gain_local, total_cost_local);
                 true
             } else if let Some(cost_basis) = &holding.cost_basis {
                 // Fall back to lot-based cost basis calculation
@@ -570,7 +568,7 @@ impl HoldingsValuationService {
                 });
 
                 holding.unrealized_gain_pct =
-                    gain_pct_from_basis(unrealized_gain_base, cost_basis_base);
+                    gain_pct_from_basis(unrealized_gain_local, cost_basis.local);
                 true
             } else {
                 // No purchase_price and no cost_basis - gain is N/A

@@ -8,9 +8,10 @@ mod tests {
     };
     use crate::assets::{
         normalize_quote_ccy_code, parse_crypto_pair_symbol, parse_symbol_with_exchange_suffix,
-        Asset, AssetKind, AssetResolutionInput as ImportAssetResolutionInput,
-        AssetResolutionOutput, AssetServiceTrait, InstrumentType, NewAsset, ProviderProfile,
-        QuoteCcyResolutionSource, QuoteMode, UpdateAssetProfile,
+        resolve_import_quote_ccy_precedence, Asset, AssetKind,
+        AssetResolutionInput as ImportAssetResolutionInput, AssetResolutionOutput,
+        AssetServiceTrait, InstrumentType, NewAsset, ProviderProfile, QuoteCcyResolutionSource,
+        QuoteMode, UpdateAssetProfile,
     };
     use crate::errors::{DatabaseError, Error, Result};
     use crate::events::{DomainEvent, MockDomainEventSink};
@@ -404,24 +405,20 @@ mod tests {
                         .activity_currency
                         .clone()
                         .filter(|currency| !currency.trim().is_empty());
-                    let (quote_ccy, quote_ccy_source) = if let Some(quote) = explicit_quote_ccy {
-                        (quote, QuoteCcyResolutionSource::ExplicitInput)
-                    } else if let Some(quote) = existing_quote_ccy {
-                        (quote, QuoteCcyResolutionSource::ExistingAsset)
-                    } else if let Some(quote) = provider_quote_ccy {
-                        (quote, QuoteCcyResolutionSource::ProviderQuote)
-                    } else if let Some(quote) = pair_quote {
-                        (quote, QuoteCcyResolutionSource::ExplicitInput)
-                    } else if let Some(quote) = mic_quote_ccy {
-                        (quote, QuoteCcyResolutionSource::MicFallback)
-                    } else if let Some(quote) = activity_quote_ccy {
-                        (quote, QuoteCcyResolutionSource::TerminalFallback)
-                    } else {
+                    let (quote_ccy, quote_ccy_source) = resolve_import_quote_ccy_precedence(
+                        explicit_quote_ccy.as_deref().or(pair_quote.as_deref()),
+                        existing_quote_ccy.as_deref(),
+                        activity_quote_ccy.as_deref(),
+                        provider_quote_ccy.as_deref(),
+                        mic_quote_ccy.as_deref(),
+                        Some(input.account_currency.as_str()),
+                    )
+                    .unwrap_or_else(|| {
                         (
                             input.account_currency.clone(),
                             QuoteCcyResolutionSource::TerminalFallback,
                         )
-                    };
+                    });
                     let kind = match instrument_type.as_ref() {
                         Some(InstrumentType::Fx) => AssetKind::Fx,
                         _ => AssetKind::Investment,
@@ -1318,6 +1315,7 @@ mod tests {
             _date_from: Option<chrono::NaiveDate>,
             _date_to: Option<chrono::NaiveDate>,
             _instrument_type_filter: Option<Vec<String>>,
+            _activity_id_filter: Option<Vec<String>>,
         ) -> Result<ActivitySearchResponse> {
             unimplemented!()
         }
@@ -1349,6 +1347,7 @@ mod tests {
                 unit_price: new_activity.unit_price,
                 amount: new_activity.amount,
                 fee: new_activity.fee,
+                tax: new_activity.tax,
                 currency: new_activity.currency,
                 fx_rate: new_activity.fx_rate,
                 notes: new_activity.notes,
@@ -1526,6 +1525,7 @@ mod tests {
                     unit_price: new_activity.unit_price,
                     amount: new_activity.amount,
                     fee: new_activity.fee,
+                    tax: new_activity.tax,
                     currency: new_activity.currency,
                     fx_rate: new_activity.fx_rate,
                     notes: new_activity.notes,
@@ -2002,6 +2002,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             amount: Some(dec!(100)),
             fee: Some(dec!(0)),
+            tax: None,
             currency: "USD".to_string(),
             fx_rate: None,
             notes: None,
@@ -2046,6 +2047,7 @@ mod tests {
             unit_price: seed.unit_price,
             amount: seed.amount,
             fee: Some(dec!(0)),
+            tax: None,
             currency: seed.currency.to_string(),
             fx_rate: None,
             notes: None,
@@ -2122,6 +2124,7 @@ mod tests {
             unit_price: Some(Some(dec!(100))),
             currency: currency.to_string(),
             fee: Some(Some(dec!(0))),
+            tax: None,
             amount: Some(Some(dec!(100))),
             status: None,
             notes: None,
@@ -2172,6 +2175,7 @@ mod tests {
                 unit_price: Some(dec!(8)),
                 currency: "USD".to_string(),
                 fee: Some(dec!(0)),
+                tax: None,
                 amount: Some(dec!(999)),
                 status: None,
                 notes: None,
@@ -2246,6 +2250,7 @@ mod tests {
                 unit_price: Some(Some(dec!(70))),
                 currency: "CAD".to_string(),
                 fee: Some(Some(dec!(0))),
+                tax: None,
                 amount: None,
                 status: None,
                 notes: None,
@@ -2311,6 +2316,7 @@ mod tests {
                 unit_price: Some(Some(dec!(98))),
                 currency: "USD".to_string(),
                 fee: Some(Some(dec!(0))),
+                tax: None,
                 amount: None,
                 status: None,
                 notes: None,
@@ -2357,6 +2363,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: None,
             status: None,
             notes: None,
@@ -2385,6 +2392,7 @@ mod tests {
         let asset_service = Arc::new(MockAssetService::new());
         let fx_service = Arc::new(MockFxService::new());
         let activity_repository = Arc::new(MockActivityRepository::new());
+        let event_sink = Arc::new(MockDomainEventSink::new());
 
         account_service.add_account(create_test_account("acc-1", "USD"));
         asset_service.add_asset(create_test_asset("AAPL", "USD"));
@@ -2395,7 +2403,8 @@ mod tests {
             asset_service,
             fx_service,
             Arc::new(MockQuoteService),
-        );
+        )
+        .with_event_sink(event_sink.clone());
 
         let new_activity = NewActivity {
             id: Some("split-1".to_string()),
@@ -2411,6 +2420,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(-2)),
             status: None,
             notes: None,
@@ -2428,6 +2438,11 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().amount, Some(dec!(2)));
+        assert!(event_sink.events().iter().any(|event| matches!(
+            event,
+            DomainEvent::AssetSplitActivitiesChanged { asset_ids, .. }
+                if asset_ids == &["AAPL".to_string()]
+        )));
     }
 
     #[tokio::test]
@@ -2553,6 +2568,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             status: None,
             notes: None,
@@ -2657,6 +2673,7 @@ mod tests {
                     unit_price: Some(dec!(100)),
                     currency: "USD".to_string(),
                     fee: Some(dec!(0)),
+                    tax: None,
                     amount: Some(dec!(100)),
                     status: Some(ActivityStatus::Posted),
                     notes: None,
@@ -2731,6 +2748,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "USD".to_string(), // Same as account currency
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1000)),
             status: None,
             notes: None,
@@ -2804,6 +2822,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "EUR".to_string(), // Different from account currency
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1000)),
             status: None,
             notes: None,
@@ -2868,6 +2887,7 @@ mod tests {
             unit_price: Some(dec!(51.90)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: None,
             status: None,
             notes: None,
@@ -2890,6 +2910,76 @@ mod tests {
             .await
             .expect_err("second identical create should be rejected as duplicate");
 
+        assert!(
+            err.to_string().contains("Duplicate activity detected"),
+            "error should clearly explain duplicate detection: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_rejects_same_trade_with_different_tax() {
+        let account_service = Arc::new(MockAccountService::new());
+        let asset_service = Arc::new(MockAssetService::new());
+        let fx_service = Arc::new(MockFxService::new());
+        let activity_repository = Arc::new(MockActivityRepository::new());
+
+        account_service.add_account(create_test_account("acc-1", "USD"));
+        asset_service.add_asset(create_test_asset("AAPL", "USD"));
+
+        let quote_service = Arc::new(MockQuoteService);
+        let activity_service = ActivityService::new(
+            activity_repository.clone(),
+            account_service,
+            asset_service,
+            fx_service,
+            quote_service,
+        );
+
+        let taxable_activity = NewActivity {
+            id: None,
+            account_id: "acc-1".to_string(),
+            asset: Some(AssetResolutionInput {
+                id: Some("AAPL".to_string()),
+                ..Default::default()
+            }),
+            activity_type: "BUY".to_string(),
+            subtype: None,
+            activity_date: "2026-02-27T21:32:00Z".to_string(),
+            quantity: Some(dec!(25)),
+            unit_price: Some(dec!(51.90)),
+            currency: "USD".to_string(),
+            fee: Some(dec!(0)),
+            tax: Some(dec!(1)),
+            amount: None,
+            status: None,
+            notes: None,
+            fx_rate: None,
+            metadata: None,
+            needs_review: None,
+            source_system: None,
+            source_record_id: None,
+            source_group_id: None,
+            idempotency_key: None,
+            import_run_id: None,
+        };
+
+        activity_service
+            .create_activity(taxable_activity.clone())
+            .await
+            .expect("first create should succeed");
+
+        let mut different_tax_activity = taxable_activity;
+        different_tax_activity.tax = Some(dec!(2));
+        let err = activity_service
+            .create_activity(different_tax_activity)
+            .await
+            .expect_err("same trade with different tax should still be a duplicate");
+
+        let stored = activity_repository
+            .get_activities()
+            .expect("stored activities should be readable");
+        assert_eq!(stored.len(), 1);
         assert!(
             err.to_string().contains("Duplicate activity detected"),
             "error should clearly explain duplicate detection: {}",
@@ -2930,6 +3020,7 @@ mod tests {
             unit_price: Some(dec!(51.90)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: None,
             status: None,
             notes: None,
@@ -2990,6 +3081,7 @@ mod tests {
                 unit_price: Some(dec!(51.90)),
                 currency: "USD".to_string(),
                 fee: Some(dec!(0)),
+                tax: None,
                 amount: None,
                 status: None,
                 notes: None,
@@ -3317,6 +3409,7 @@ mod tests {
             unit_price: Some(dec!(150)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1500)),
             status: None,
             notes: None,
@@ -3394,6 +3487,7 @@ mod tests {
             unit_price: Some(dec!(150)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1500)),
             status: None,
             notes: None,
@@ -3461,6 +3555,7 @@ mod tests {
             unit_price: Some(dec!(200)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1000)),
             status: None,
             notes: None,
@@ -3521,6 +3616,7 @@ mod tests {
             unit_price: Some(dec!(500)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(500)),
             status: None,
             notes: None,
@@ -3572,6 +3668,7 @@ mod tests {
             unit_price: Some(dec!(4000)),
             currency: "CAD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1000)),
             status: None,
             notes: None,
@@ -3634,6 +3731,7 @@ mod tests {
                 unit_price: Some(dec!(4000)),
                 currency: "USD".to_string(),
                 fee: Some(dec!(0)),
+                tax: None,
                 amount: Some(dec!(1000)),
                 status: None,
                 notes: None,
@@ -3692,6 +3790,7 @@ mod tests {
                 unit_price: Some(dec!(-4000)),
                 currency: "USD".to_string(),
                 fee: Some(dec!(0)),
+                tax: None,
                 amount: Some(dec!(-1000)),
                 status: None,
                 notes: None,
@@ -3713,7 +3812,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sync_prepare_allows_provider_subtype_label() {
+    async fn test_sync_prepare_canonicalizes_provider_position_subtype_label() {
         let account_service = Arc::new(MockAccountService::new());
         let asset_service = Arc::new(MockAssetService::new());
         let fx_service = Arc::new(MockFxService::new());
@@ -3747,6 +3846,7 @@ mod tests {
                     unit_price: Some(dec!(100)),
                     currency: "USD".to_string(),
                     fee: Some(dec!(0)),
+                    tax: None,
                     amount: Some(dec!(100)),
                     status: None,
                     notes: None,
@@ -3762,14 +3862,78 @@ mod tests {
                 &account,
             )
             .await
-            .expect("sync preparation should not reject provider subtype labels");
+            .expect("sync preparation should canonicalize provider position subtype labels");
 
         assert!(result.errors.is_empty());
         assert_eq!(result.prepared.len(), 1);
         assert_eq!(
             result.prepared[0].activity.subtype.as_deref(),
-            Some("BUY_TO_OPEN")
+            Some("POSITION_OPEN")
         );
+    }
+
+    #[tokio::test]
+    async fn test_import_prepare_normalizes_minor_currency_tax() {
+        let account_service = Arc::new(MockAccountService::new());
+        let asset_service = Arc::new(MockAssetService::new());
+        let fx_service = Arc::new(MockFxService::new());
+        let activity_repository = Arc::new(MockActivityRepository::new());
+
+        let account = create_test_account("acc-1", "GBP");
+        account_service.add_account(account.clone());
+        asset_service.add_asset(create_test_asset("SEC:AZN:XLON", "GBp"));
+
+        let activity_service = ActivityService::new(
+            activity_repository,
+            account_service,
+            asset_service,
+            fx_service,
+            Arc::new(MockQuoteService),
+        );
+
+        let result = activity_service
+            .prepare_activities_for_import(
+                vec![NewActivity {
+                    id: Some("gbp-tax-import".to_string()),
+                    account_id: "acc-1".to_string(),
+                    asset: Some(AssetResolutionInput {
+                        id: Some("SEC:AZN:XLON".to_string()),
+                        ..Default::default()
+                    }),
+                    activity_type: "BUY".to_string(),
+                    subtype: None,
+                    activity_date: "2024-01-15".to_string(),
+                    quantity: Some(dec!(10)),
+                    unit_price: Some(dec!(14082)),
+                    currency: "GBp".to_string(),
+                    fee: Some(dec!(999)),
+                    tax: Some(dec!(150)),
+                    amount: Some(dec!(140820)),
+                    status: None,
+                    notes: None,
+                    fx_rate: None,
+                    metadata: None,
+                    needs_review: None,
+                    source_system: None,
+                    source_record_id: None,
+                    source_group_id: None,
+                    idempotency_key: None,
+                    import_run_id: None,
+                }],
+                &account,
+            )
+            .await
+            .expect("import preparation should normalize minor currency values");
+
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(result.prepared.len(), 1);
+
+        let prepared = &result.prepared[0].activity;
+        assert_eq!(prepared.currency, "GBP");
+        assert_eq!(prepared.unit_price, Some(dec!(140.82)));
+        assert_eq!(prepared.amount, Some(dec!(1408.20)));
+        assert_eq!(prepared.fee, Some(dec!(9.99)));
+        assert_eq!(prepared.tax, Some(dec!(1.50)));
     }
 
     #[tokio::test]
@@ -3803,6 +3967,7 @@ mod tests {
                     unit_price: None,
                     currency: "USD".to_string(),
                     fee: Some(dec!(0)),
+                    tax: None,
                     amount: Some(dec!(25)),
                     status: None,
                     notes: None,
@@ -3865,6 +4030,7 @@ mod tests {
                     unit_price: Some(dec!(12.50)),
                     currency: "USD".to_string(),
                     fee: Some(dec!(0)),
+                    tax: None,
                     amount: None,
                     status: None,
                     notes: None,
@@ -3923,6 +4089,7 @@ mod tests {
                     unit_price: None,
                     currency: "USD".to_string(),
                     fee: Some(dec!(0)),
+                    tax: None,
                     amount: Some(dec!(25)),
                     status: None,
                     notes: None,
@@ -3978,6 +4145,7 @@ mod tests {
                     unit_price: None,
                     currency: "USD".to_string(),
                     fee: Some(dec!(0)),
+                    tax: None,
                     amount: Some(dec!(25)),
                     status: None,
                     notes: None,
@@ -4042,6 +4210,7 @@ mod tests {
                 unit_price: Some(dec!(100)),
                 currency: "USD".to_string(),
                 fee: Some(dec!(0)),
+                tax: None,
                 amount: Some(dec!(100)),
                 status: None,
                 notes: None,
@@ -4119,6 +4288,7 @@ mod tests {
             unit_price: Some(dec!(150)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1500)),
             status: None,
             notes: None,
@@ -4291,6 +4461,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             status: None,
             notes: None,
@@ -4359,6 +4530,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             status: None,
             notes: None,
@@ -4420,6 +4592,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             status: None,
             notes: None,
@@ -4476,6 +4649,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1000)),
             status: None,
             notes: None,
@@ -4530,6 +4704,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(500)),
             status: None,
             notes: None,
@@ -4584,6 +4759,7 @@ mod tests {
             unit_price: Some(dec!(150)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1500)),
             status: None,
             notes: None,
@@ -4648,6 +4824,7 @@ mod tests {
             unit_price: Some(dec!(50000)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(50000)),
             status: None,
             notes: None,
@@ -4716,6 +4893,7 @@ mod tests {
             unit_price: Some(dec!(50000)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(50000)),
             status: None,
             notes: None,
@@ -4787,6 +4965,7 @@ mod tests {
             unit_price: Some(dec!(50)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(5000)),
             status: None,
             notes: None,
@@ -4856,6 +5035,7 @@ mod tests {
             unit_price: Some(dec!(30)),
             currency: "CAD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(3000)),
             status: None,
             notes: None,
@@ -4922,6 +5102,7 @@ mod tests {
                 unit_price: None,
                 currency: "USD".to_string(),
                 fee: Some(dec!(0)),
+                tax: None,
                 amount: Some(dec!(100)),
                 status: None,
                 notes: None,
@@ -4994,6 +5175,7 @@ mod tests {
                 unit_price: Some(dec!(100)),
                 currency: "USD".to_string(), // Same as account, different from asset
                 fee: Some(dec!(0)),
+                tax: None,
                 amount: Some(dec!(1000)),
                 status: None,
                 notes: None,
@@ -5065,6 +5247,7 @@ mod tests {
             unit_price: Some(dec!(120)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1200)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -5104,6 +5287,373 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_check_import_uses_existing_asset_currency_when_import_currency_is_missing() {
+        let account_service = Arc::new(MockAccountService::new());
+        let asset_service = Arc::new(MockAssetService::new());
+        let fx_service = Arc::new(MockFxService::new());
+        let activity_repository = Arc::new(MockActivityRepository::new());
+
+        let account = create_test_account("acc-1", "CAD");
+        account_service.add_account(account);
+
+        let asset = create_test_asset_with_instrument(
+            "kweb-uuid",
+            "KWEB",
+            Some("ARCX"),
+            Some(InstrumentType::Equity),
+            "USD",
+        );
+        asset_service.add_asset(asset);
+
+        let quote_service = Arc::new(MockQuoteService);
+        let activity_service = ActivityService::new(
+            activity_repository,
+            account_service,
+            asset_service,
+            fx_service,
+            quote_service,
+        );
+
+        let import = ActivityImport {
+            id: None,
+            date: "2026-06-30".to_string(),
+            symbol: "KWEB".to_string(),
+            activity_type: "BUY".to_string(),
+            quantity: Some(dec!(10)),
+            unit_price: Some(dec!(28.50)),
+            currency: String::new(),
+            fee: Some(dec!(0)),
+            tax: None,
+            amount: Some(dec!(285)),
+            comment: None,
+            account_id: Some("acc-1".to_string()),
+            account_name: None,
+            symbol_name: None,
+            exchange_mic: Some("ARCX".to_string()),
+            quote_ccy: None,
+            instrument_type: None,
+            quote_mode: None,
+            provider_id: None,
+            provider_symbol: None,
+            errors: None,
+            warnings: None,
+            duplicate_of_id: None,
+            duplicate_of_line_number: None,
+            is_draft: false,
+            is_valid: true,
+            line_number: Some(1),
+            fx_rate: None,
+            subtype: None,
+            asset_id: None,
+            isin: None,
+            force_import: false,
+            is_external: None,
+        };
+
+        let result = activity_service
+            .check_activities_import(vec![import])
+            .await
+            .expect("import check should succeed");
+
+        let checked = &result[0];
+        assert_eq!(checked.asset_id.as_deref(), Some("kweb-uuid"));
+        assert_eq!(checked.currency, "USD");
+        assert_eq!(checked.quote_ccy.as_deref(), Some("USD"));
+    }
+
+    #[tokio::test]
+    async fn test_check_import_preserves_explicit_import_currency_for_existing_asset() {
+        let account_service = Arc::new(MockAccountService::new());
+        let asset_service = Arc::new(MockAssetService::new());
+        let fx_service = Arc::new(MockFxService::new());
+        let activity_repository = Arc::new(MockActivityRepository::new());
+
+        let account = create_test_account("acc-1", "CAD");
+        account_service.add_account(account);
+
+        let asset = create_test_asset_with_instrument(
+            "kweb-uuid",
+            "KWEB",
+            Some("ARCX"),
+            Some(InstrumentType::Equity),
+            "USD",
+        );
+        asset_service.add_asset(asset);
+
+        let quote_service = Arc::new(MockQuoteService);
+        let activity_service = ActivityService::new(
+            activity_repository,
+            account_service,
+            asset_service,
+            fx_service,
+            quote_service,
+        );
+
+        let import = ActivityImport {
+            id: None,
+            date: "2026-06-30".to_string(),
+            symbol: "KWEB".to_string(),
+            activity_type: "BUY".to_string(),
+            quantity: Some(dec!(10)),
+            unit_price: Some(dec!(28.50)),
+            currency: "CAD".to_string(),
+            fee: Some(dec!(0)),
+            tax: None,
+            amount: Some(dec!(285)),
+            comment: None,
+            account_id: Some("acc-1".to_string()),
+            account_name: None,
+            symbol_name: None,
+            exchange_mic: Some("ARCX".to_string()),
+            quote_ccy: None,
+            instrument_type: None,
+            quote_mode: None,
+            provider_id: None,
+            provider_symbol: None,
+            errors: None,
+            warnings: None,
+            duplicate_of_id: None,
+            duplicate_of_line_number: None,
+            is_draft: false,
+            is_valid: true,
+            line_number: Some(1),
+            fx_rate: None,
+            subtype: None,
+            asset_id: None,
+            isin: None,
+            force_import: false,
+            is_external: None,
+        };
+
+        let result = activity_service
+            .check_activities_import(vec![import])
+            .await
+            .expect("import check should succeed");
+
+        let checked = &result[0];
+        assert_eq!(checked.asset_id.as_deref(), Some("kweb-uuid"));
+        assert_eq!(checked.currency, "CAD");
+        assert_eq!(checked.quote_ccy.as_deref(), Some("USD"));
+    }
+
+    #[tokio::test]
+    async fn test_check_import_uses_activity_currency_before_provider_quote_for_new_asset() {
+        let account_service = Arc::new(MockAccountService::new());
+        let asset_service = Arc::new(MockAssetService::new());
+        let fx_service = Arc::new(MockFxService::new());
+        let activity_repository = Arc::new(MockActivityRepository::new());
+
+        let account = create_test_account("acc-1", "USD");
+        account_service.add_account(account);
+
+        let quote_service = Arc::new(MockQuoteService);
+        let activity_service = ActivityService::new(
+            activity_repository,
+            account_service,
+            asset_service,
+            fx_service,
+            quote_service,
+        );
+
+        let import = ActivityImport {
+            id: None,
+            date: "2026-06-30".to_string(),
+            symbol: "VOD.L".to_string(),
+            activity_type: "BUY".to_string(),
+            quantity: Some(dec!(10)),
+            unit_price: Some(dec!(28.50)),
+            currency: "USD".to_string(),
+            fee: Some(dec!(0)),
+            tax: None,
+            amount: Some(dec!(285)),
+            comment: None,
+            account_id: Some("acc-1".to_string()),
+            account_name: None,
+            symbol_name: None,
+            exchange_mic: None,
+            quote_ccy: None,
+            instrument_type: None,
+            quote_mode: None,
+            provider_id: None,
+            provider_symbol: None,
+            errors: None,
+            warnings: None,
+            duplicate_of_id: None,
+            duplicate_of_line_number: None,
+            is_draft: false,
+            is_valid: true,
+            line_number: Some(1),
+            fx_rate: None,
+            subtype: None,
+            asset_id: None,
+            isin: None,
+            force_import: false,
+            is_external: None,
+        };
+
+        let result = activity_service
+            .check_activities_import(vec![import])
+            .await
+            .expect("import check should succeed");
+
+        let checked = &result[0];
+        assert_eq!(checked.exchange_mic.as_deref(), Some("XLON"));
+        assert_eq!(checked.currency, "USD");
+        assert_eq!(checked.quote_ccy.as_deref(), Some("USD"));
+        assert_eq!(
+            checked
+                .warnings
+                .as_ref()
+                .and_then(|warnings| warnings.get("_quote_ccy_fallback")),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn test_check_import_keeps_provider_quote_unit_when_activity_currency_is_major() {
+        let account_service = Arc::new(MockAccountService::new());
+        let asset_service = Arc::new(MockAssetService::new());
+        let fx_service = Arc::new(MockFxService::new());
+        let activity_repository = Arc::new(MockActivityRepository::new());
+
+        let account = create_test_account("acc-1", "GBP");
+        account_service.add_account(account);
+
+        let quote_service = Arc::new(MockQuoteService);
+        let activity_service = ActivityService::new(
+            activity_repository,
+            account_service,
+            asset_service,
+            fx_service,
+            quote_service,
+        );
+
+        let import = ActivityImport {
+            id: None,
+            date: "2026-06-30".to_string(),
+            symbol: "VOD.L".to_string(),
+            activity_type: "BUY".to_string(),
+            quantity: Some(dec!(10)),
+            unit_price: Some(dec!(28.50)),
+            currency: "GBP".to_string(),
+            fee: Some(dec!(0)),
+            tax: None,
+            amount: Some(dec!(285)),
+            comment: None,
+            account_id: Some("acc-1".to_string()),
+            account_name: None,
+            symbol_name: None,
+            exchange_mic: None,
+            quote_ccy: None,
+            instrument_type: None,
+            quote_mode: None,
+            provider_id: None,
+            provider_symbol: None,
+            errors: None,
+            warnings: None,
+            duplicate_of_id: None,
+            duplicate_of_line_number: None,
+            is_draft: false,
+            is_valid: true,
+            line_number: Some(1),
+            fx_rate: None,
+            subtype: None,
+            asset_id: None,
+            isin: None,
+            force_import: false,
+            is_external: None,
+        };
+
+        let result = activity_service
+            .check_activities_import(vec![import])
+            .await
+            .expect("import check should succeed");
+
+        let checked = &result[0];
+        assert_eq!(checked.exchange_mic.as_deref(), Some("XLON"));
+        assert_eq!(checked.currency, "GBP");
+        assert_eq!(checked.quote_ccy.as_deref(), Some("GBp"));
+        assert_eq!(
+            checked
+                .warnings
+                .as_ref()
+                .and_then(|warnings| warnings.get("_quote_ccy_fallback")),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn test_check_import_does_not_default_missing_currency_before_asset_resolution() {
+        let account_service = Arc::new(MockAccountService::new());
+        let asset_service = Arc::new(MockAssetService::new());
+        let fx_service = Arc::new(MockFxService::new());
+        let activity_repository = Arc::new(MockActivityRepository::new());
+
+        let account = create_test_account("acc-1", "USD");
+        account_service.add_account(account);
+
+        let quote_service = Arc::new(MockQuoteService);
+        let activity_service = ActivityService::new(
+            activity_repository,
+            account_service,
+            asset_service.clone(),
+            fx_service,
+            quote_service,
+        );
+
+        let import = ActivityImport {
+            id: None,
+            date: "2026-06-30".to_string(),
+            symbol: "VOD.L".to_string(),
+            activity_type: "BUY".to_string(),
+            quantity: Some(dec!(10)),
+            unit_price: Some(dec!(28.50)),
+            currency: String::new(),
+            fee: Some(dec!(0)),
+            tax: None,
+            amount: Some(dec!(285)),
+            comment: None,
+            account_id: Some("acc-1".to_string()),
+            account_name: None,
+            symbol_name: None,
+            exchange_mic: None,
+            quote_ccy: None,
+            instrument_type: None,
+            quote_mode: None,
+            provider_id: None,
+            provider_symbol: None,
+            errors: None,
+            warnings: None,
+            duplicate_of_id: None,
+            duplicate_of_line_number: None,
+            is_draft: false,
+            is_valid: true,
+            line_number: Some(1),
+            fx_rate: None,
+            subtype: None,
+            asset_id: None,
+            isin: None,
+            force_import: false,
+            is_external: None,
+        };
+
+        let result = activity_service
+            .check_activities_import(vec![import])
+            .await
+            .expect("import check should succeed");
+
+        let batches = asset_service
+            .resolve_import_asset_input_batches
+            .lock()
+            .unwrap();
+        assert_eq!(batches[0][0].activity_currency, None);
+
+        let checked = &result[0];
+        assert_eq!(checked.quote_ccy.as_deref(), Some("GBp"));
+        assert_eq!(checked.currency, "USD");
+    }
+
+    #[tokio::test]
     async fn test_check_import_does_not_resolve_reviewed_assets_again() {
         let account_service = Arc::new(MockAccountService::new());
         let asset_service = Arc::new(MockAssetService::new());
@@ -5131,6 +5681,7 @@ mod tests {
             unit_price: Some(dec!(120)),
             currency: "CAD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1200)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -5226,6 +5777,7 @@ mod tests {
                 unit_price: Some(dec!(100)),
                 currency: "USD".to_string(),
                 fee: Some(dec!(0)),
+                tax: None,
                 amount: Some(dec!(100)),
                 comment: None,
                 account_id: Some("acc-1".to_string()),
@@ -5260,6 +5812,7 @@ mod tests {
                 unit_price: Some(dec!(100)),
                 currency: "USD".to_string(),
                 fee: Some(dec!(0)),
+                tax: None,
                 amount: Some(dec!(100)),
                 comment: None,
                 account_id: Some("acc-1".to_string()),
@@ -5342,6 +5895,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -5411,6 +5965,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -5656,8 +6211,9 @@ mod tests {
             activity_type: "BUY".to_string(),
             quantity: Some(dec!(10)),
             unit_price: Some(dec!(120)),
-            currency: "CAD".to_string(),
+            currency: String::new(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1200)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -5731,6 +6287,7 @@ mod tests {
             unit_price: Some(dec!(120)),
             currency: "EUR".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1200)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -5797,6 +6354,7 @@ mod tests {
             unit_price: Some(dec!(70)),
             currency: "GBp".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(700)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -5870,6 +6428,7 @@ mod tests {
             unit_price: Some(dec!(440)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1320)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -5940,6 +6499,7 @@ mod tests {
             unit_price: Some(dec!(120)),
             currency: "CAD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1200)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6007,6 +6567,7 @@ mod tests {
             unit_price: Some(dec!(132)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(132)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6080,6 +6641,7 @@ mod tests {
             unit_price: Some(dec!(120)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1200)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6161,6 +6723,7 @@ mod tests {
             unit_price: Some(dec!(120)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1200)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6232,6 +6795,7 @@ mod tests {
             unit_price: Some(dec!(65000)),
             currency: "CAD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(65000)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6299,6 +6863,7 @@ mod tests {
             unit_price: Some(dec!(132)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(132)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6372,6 +6937,7 @@ mod tests {
             unit_price: Some(dec!(132)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(132)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6441,6 +7007,7 @@ mod tests {
             unit_price: Some(dec!(132)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(132)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6510,6 +7077,7 @@ mod tests {
             unit_price: Some(dec!(4000)),
             currency: "CAD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1000)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6579,6 +7147,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6645,6 +7214,7 @@ mod tests {
             unit_price: Some(dec!(5)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(500)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6674,11 +7244,14 @@ mod tests {
         let result = activity_service
             .import_activities(vec![option_buy])
             .await
-            .expect("import should accept provider subtype labels");
+            .expect("import should canonicalize provider position subtype labels");
 
         assert!(result.summary.success);
         assert_eq!(result.summary.imported, 1);
-        assert_eq!(result.activities[0].subtype.as_deref(), Some("BUY_TO_OPEN"));
+        assert_eq!(
+            result.activities[0].subtype.as_deref(),
+            Some("POSITION_OPEN")
+        );
     }
 
     #[tokio::test]
@@ -6709,6 +7282,7 @@ mod tests {
             unit_price: None,
             currency: "CAD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(42)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6778,6 +7352,7 @@ mod tests {
             unit_price: None,
             currency: "CAD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(42)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6856,6 +7431,7 @@ mod tests {
             unit_price: Some(dec!(132)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(132)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6930,6 +7506,7 @@ mod tests {
                     unit_price: None,
                     currency: "USD".to_string(),
                     fee: Some(dec!(0)),
+                    tax: None,
                     amount: Some(dec!(1000)),
                     comment: Some("Funding".to_string()),
                     account_id: Some("acc-1".to_string()),
@@ -6964,6 +7541,7 @@ mod tests {
                     unit_price: Some(dec!(100)),
                     currency: "USD".to_string(),
                     fee: Some(dec!(0)),
+                    tax: None,
                     amount: Some(dec!(1000)),
                     comment: Some("Buy AAPL".to_string()),
                     account_id: Some("acc-1".to_string()),
@@ -7251,6 +7829,7 @@ mod tests {
             unit_price: Some(dec!(132)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(132)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -7297,7 +7876,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_import_prepare_errors_are_keyed_under_symbol_field() {
+    async fn test_import_prepare_date_errors_are_keyed_under_activity_date_field() {
         let account_service = Arc::new(MockAccountService::new());
         let asset_service = Arc::new(MockAssetService::new());
         let fx_service = Arc::new(MockFxService::new());
@@ -7324,6 +7903,7 @@ mod tests {
             unit_price: Some(dec!(132)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(132)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -7363,8 +7943,8 @@ mod tests {
             .errors
             .as_ref()
             .expect("expected prepare errors");
-        assert!(errors.contains_key("symbol"));
-        assert!(!errors.contains_key("VWRPL"));
+        assert!(errors.contains_key("activityDate"));
+        assert!(!errors.contains_key("symbol"));
     }
 
     #[tokio::test]
@@ -7395,6 +7975,7 @@ mod tests {
             unit_price: None,
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(500)),
             comment: Some("Cash top up".to_string()),
             account_id: Some("acc-1".to_string()),
@@ -7465,6 +8046,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -7543,6 +8125,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(500)),
             comment: Some("Internal transfer out".to_string()),
             account_id: Some("acc-2".to_string()),
@@ -7578,6 +8161,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(500)),
             comment: Some("Internal transfer in".to_string()),
             account_id: Some("acc-1".to_string()),
@@ -7684,6 +8268,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(500)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -7719,6 +8304,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(500)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -7804,6 +8390,7 @@ mod tests {
             unit_price: None,
             currency: "CAD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(32.93)),
             comment: Some("FxExchange".to_string()),
             account_id: Some("acc-1".to_string()),
@@ -7839,6 +8426,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(24.33)),
             comment: Some("FxExchange".to_string()),
             account_id: Some("acc-1".to_string()),
@@ -7960,6 +8548,7 @@ mod tests {
             unit_price: None,
             currency: currency.to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(amount),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -8034,6 +8623,7 @@ mod tests {
             None,
             None,
             Some(dec!(500)),
+            None,
             "USD",
             None,
             None,
@@ -8057,6 +8647,7 @@ mod tests {
                 unit_price: None,
                 amount: Some(dec!(500)),
                 fee: Some(dec!(0)),
+                tax: None,
                 currency: "USD".to_string(),
                 fx_rate: None,
                 notes: None,
@@ -8090,6 +8681,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(500)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -8125,6 +8717,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(500)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -8462,6 +9055,7 @@ mod tests {
                 unit_price: None,
                 amount: Some(dec!(100)),
                 fee: Some(dec!(0)),
+                tax: None,
                 currency: "CAD".to_string(),
                 fx_rate: None,
                 notes: None,
@@ -8491,6 +9085,7 @@ mod tests {
                 unit_price: None,
                 amount: Some(dec!(100)),
                 fee: Some(dec!(0)),
+                tax: None,
                 currency: "USD".to_string(),
                 fx_rate: None,
                 notes: None,
@@ -8965,6 +9560,7 @@ mod tests {
                     unit_price: Some(None),
                     currency: "USD".to_string(),
                     fee: Some(Some(dec!(0))),
+                    tax: None,
                     amount: Some(Some(dec!(125))),
                     status: None,
                     notes: None,
@@ -9008,6 +9604,7 @@ mod tests {
             Some(dec!(1)),
             Some(dec!(100)),
             Some(dec!(100)),
+            None,
             "GBP",
             None,
             None,
@@ -9031,6 +9628,7 @@ mod tests {
                 unit_price: Some(dec!(100)),
                 amount: Some(dec!(100)),
                 fee: Some(dec!(0)),
+                tax: None,
                 currency: "GBP".to_string(),
                 fx_rate: None,
                 notes: None,
@@ -9064,6 +9662,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -9138,6 +9737,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -9218,6 +9818,7 @@ mod tests {
             Some(dec!(1)),
             Some(dec!(100)),
             Some(dec!(100)),
+            None,
             "GBP",
             None,
             None,
@@ -9241,6 +9842,7 @@ mod tests {
                 unit_price: Some(dec!(100)),
                 amount: Some(dec!(100)),
                 fee: Some(dec!(0)),
+                tax: None,
                 currency: "GBP".to_string(),
                 fx_rate: None,
                 notes: None,
@@ -9274,6 +9876,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -9365,6 +9968,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -9462,6 +10066,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -9556,7 +10161,8 @@ mod tests {
             unit_price: Some(dec!(14082)), // 14082 pence
             currency: "GBp".to_string(),   // Pence currency
             fee: Some(dec!(999)),          // 999 pence fee
-            amount: Some(dec!(140820)),    // 140820 pence total
+            tax: None,
+            amount: Some(dec!(140820)), // 140820 pence total
             status: None,
             notes: None,
             fx_rate: None,
@@ -9646,6 +10252,7 @@ mod tests {
             unit_price: Some(dec!(7500)), // 7500 pence
             currency: "GBX".to_string(),  // Alternative pence code
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(750000)), // 750000 pence
             status: None,
             notes: None,
@@ -9709,6 +10316,7 @@ mod tests {
             unit_price: Some(dec!(200000)), // 200000 cents = 2000 ZAR
             currency: "ZAc".to_string(),
             fee: Some(dec!(1000)), // 1000 cents = 10 ZAR
+            tax: None,
             amount: Some(dec!(10000000)),
             status: None,
             notes: None,
@@ -9772,6 +10380,7 @@ mod tests {
             unit_price: Some(dec!(0.45)), // Already in GBP
             currency: "GBP".to_string(),  // Major currency
             fee: Some(dec!(5)),
+            tax: None,
             amount: Some(dec!(450)),
             status: None,
             notes: None,
@@ -9833,6 +10442,7 @@ mod tests {
             unit_price: Some(dec!(99.5)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(995)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -9901,6 +10511,7 @@ mod tests {
             unit_price: Some(dec!(99.5)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(995)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -9969,6 +10580,7 @@ mod tests {
                 unit_price: Some(dec!(99.5)),
                 currency: "USD".to_string(),
                 fee: Some(dec!(0)),
+                tax: None,
                 amount: Some(dec!(995)),
                 comment: None,
                 account_id: Some("acc-1".to_string()),
@@ -10049,6 +10661,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(500)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -10130,6 +10743,7 @@ mod tests {
             unit_price: Some(dec!(5.50)),
             currency: "USD".to_string(),
             fee: Some(dec!(0.65)),
+            tax: None,
             amount: Some(dec!(550)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -10199,6 +10813,7 @@ mod tests {
             unit_price: Some(dec!(8.35)),
             currency: "USD".to_string(),
             fee: Some(dec!(1.30)),
+            tax: None,
             amount: Some(dec!(1670)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -10277,6 +10892,7 @@ mod tests {
             unit_price: Some(dec!(8.00)),
             currency: "USD".to_string(),
             fee: Some(dec!(0.65)),
+            tax: None,
             amount: Some(dec!(800)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -10368,6 +10984,7 @@ mod tests {
             unit_price: Some(dec!(5)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(10)),
             status: None,
             notes: None,
@@ -10436,6 +11053,7 @@ mod tests {
                 unit_price: None,
                 amount: Some(dec!(500)),
                 fee: Some(dec!(0)),
+                tax: None,
                 currency: "USD".to_string(),
                 fx_rate: None,
                 notes: None,
@@ -10465,6 +11083,7 @@ mod tests {
                 unit_price: None,
                 amount: Some(dec!(500)),
                 fee: Some(dec!(0)),
+                tax: None,
                 currency: "USD".to_string(),
                 fx_rate: None,
                 notes: None,
@@ -10492,6 +11111,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: None,
+            tax: None,
             amount: Some(Some(dec!(750))),
             status: Some(ActivityStatus::Posted),
             notes: Some("moved funds".to_string()),
@@ -10562,6 +11182,7 @@ mod tests {
                 unit_price: None,
                 amount: Some(dec!(100)),
                 fee: Some(dec!(0)),
+                tax: None,
                 currency: "USD".to_string(),
                 fx_rate: None,
                 notes: None,
@@ -10591,6 +11212,7 @@ mod tests {
                 unit_price: None,
                 amount: Some(dec!(100)),
                 fee: Some(dec!(0)),
+                tax: None,
                 currency: "USD".to_string(),
                 fx_rate: None,
                 notes: None,

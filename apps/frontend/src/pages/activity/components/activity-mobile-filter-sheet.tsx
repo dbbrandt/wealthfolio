@@ -7,12 +7,14 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@wealthfolio/ui/components/ui/sheet";
+import { localizeActivityTypeName } from "@/lib/activity-utils";
 import { ActivityType, ActivityTypeNames } from "@/lib/constants";
 import { DateRangeFilter } from "@/features/spending/components/date-range-filter";
 import { Account, AccountScope, PortfolioWithAccounts } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@wealthfolio/ui";
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { DateRange } from "react-day-picker";
 
 interface ActivityMobileFilterSheetProps {
@@ -51,6 +53,7 @@ export const ActivityMobileFilterSheet = ({
   dateRange,
   setFilters,
 }: ActivityMobileFilterSheetProps) => {
+  const { t } = useTranslation();
   // Local state for temporary selections
   const [localAccountScope, setLocalAccountScope] = useState<AccountScope>(accountScope);
   const [localActivityTypes, setLocalActivityTypes] =
@@ -83,8 +86,8 @@ export const ActivityMobileFilterSheet = ({
     setLocalAccountScope(scopeFromAccountIds(next));
   };
 
-  const activityTypeOptions = Object.entries(ActivityTypeNames).map(([value, label]) => ({
-    label,
+  const activityTypeOptions = Object.keys(ActivityTypeNames).map((value) => ({
+    label: localizeActivityTypeName(t, value),
     value: value as ActivityType,
   }));
 
@@ -92,19 +95,19 @@ export const ActivityMobileFilterSheet = ({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="bottom" className="rounded-t-4xl mx-1 flex h-[80vh] flex-col">
         <SheetHeader className="text-left">
-          <SheetTitle>Filter Activities</SheetTitle>
+          <SheetTitle>{t("activity:filter_activities")}</SheetTitle>
         </SheetHeader>
         <ScrollArea className="flex-1 py-4">
           <div className="space-y-6 pr-4">
             {/* Date Filter Section */}
             <div>
-              <h4 className="mb-3 font-medium">Date</h4>
+              <h4 className="mb-3 font-medium">{t("activity:field_date")}</h4>
               <DateRangeFilter value={localDateRange} onChange={setLocalDateRange} />
             </div>
 
             {/* Account Filter Section */}
             <div>
-              <h4 className="mb-3 font-medium">Account</h4>
+              <h4 className="mb-3 font-medium">{t("activity:filter_account")}</h4>
               <ul className="space-y-1">
                 <li
                   className={cn(
@@ -115,7 +118,7 @@ export const ActivityMobileFilterSheet = ({
                     setLocalAccountScope({ type: "all" });
                   }}
                 >
-                  <span>All Accounts</span>
+                  <span>{t("activity:all_accounts")}</span>
                   {localAccountScope.type === "all" && <Icons.Check className="h-4 w-4" />}
                 </li>
                 {portfolios.map((portfolio) => {
@@ -163,7 +166,7 @@ export const ActivityMobileFilterSheet = ({
 
             {/* Activity Type Filter Section */}
             <div>
-              <h4 className="mb-3 font-medium">Activity Type</h4>
+              <h4 className="mb-3 font-medium">{t("activity:activity_type")}</h4>
               <ul className="space-y-1">
                 <li
                   className={cn(
@@ -174,7 +177,7 @@ export const ActivityMobileFilterSheet = ({
                     setLocalActivityTypes([]);
                   }}
                 >
-                  <span>All Types</span>
+                  <span>{t("activity:all_types")}</span>
                   {localActivityTypes.length === 0 && <Icons.Check className="h-4 w-4" />}
                 </li>
                 {activityTypeOptions.map((type) => (
@@ -186,7 +189,7 @@ export const ActivityMobileFilterSheet = ({
                     )}
                     onClick={() => {
                       const newTypes = localActivityTypes.includes(type.value)
-                        ? localActivityTypes.filter((t) => t !== type.value)
+                        ? localActivityTypes.filter((existing) => existing !== type.value)
                         : [...localActivityTypes, type.value];
                       setLocalActivityTypes(newTypes);
                     }}
@@ -201,7 +204,7 @@ export const ActivityMobileFilterSheet = ({
         </ScrollArea>
         <SheetFooter className="mt-auto">
           <Button className="w-full" onClick={handleApply}>
-            Done
+            {t("activity:done")}
           </Button>
         </SheetFooter>
       </SheetContent>

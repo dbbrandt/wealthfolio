@@ -6,6 +6,12 @@
 #
 # Patterns are extended-regex (`grep -E`). Paths are repo-relative.
 #
+# Convention: this manifest answers "did the fix survive?" (grep the touchpoints).
+# A carried fix that COLLIDES with an upstream rewrite of the same subsystem also
+# gets a procedural re-apply doc under .claude/merge-reapply/, referenced from its
+# entry via a `reapply_doc:` field. Simple fixes stay manifest-only. WC-40 is the
+# current example (upstream keeps evolving the quote-sync/backfill code beneath it).
+#
 # History note: the v3.4.0 upstream merge silently dropped two of the six
 # rebuild_portfolio touchpoints because the file structure changed
 # (web/index.ts -> web/core.ts). pnpm check and cargo test both passed; the
@@ -198,6 +204,7 @@ upstream_candidate_fixes:
       - crates/storage-sqlite/src/market_data/model.rs
       - crates/storage-sqlite/src/schema.rs
       - crates/storage-sqlite/migrations/2026-07-04-000001_backfill_attempt_marker/
+    reapply_doc: .claude/merge-reapply/WC-40-cross-provider-quote-bounds.md
     upstream_status: not filed.
   - id: WC-43
     commit: 9822ac0a
