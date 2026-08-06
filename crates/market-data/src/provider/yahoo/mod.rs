@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use crate::SymbolResolver;
 use async_trait::async_trait;
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use lazy_static::lazy_static;
 use log::{debug, warn};
 use num_traits::FromPrimitive;
@@ -628,6 +628,92 @@ impl YahooProvider {
     }
 
     // ========================================================================
+    // Recent-day Fallback (WC-51)
+    // ========================================================================
+
+    /// Decide whether the latest real-time quote should fill a recent-day gap,
+    /// and on which trading date to store it.
+    ///
+    /// Returns `Some(date)` when a fill is warranted, `None` otherwise. Pure so
+    /// the date/clamping logic can be unit-tested without network access.
+    ///
+    /// - Skips the fill when historical bars already reach `end_date`.
+    /// - Clamps to `end_date` because Yahoo stamps a fund's NAV in the evening
+    ///   (US) which can roll into the next UTC day — we must never emit a
+    ///   future-dated quote.
+    /// - Skips when the (clamped) date is not strictly newer than the newest
+    ///   historical bar, avoiding duplicate/rewrite of a day we already have.
+    fn plan_latest_fill(
+        newest_historical: Option<NaiveDate>,
+        latest_observed: NaiveDate,
+        end_date: NaiveDate,
+    ) -> Option<NaiveDate> {
+        if newest_historical.is_some_and(|n| n >= end_date) {
+            return None;
+        }
+        let target = latest_observed.min(end_date);
+        if newest_historical.is_some_and(|n| target <= n) {
+            return None;
+        }
+        Some(target)
+    }
+
+    /// Fill the most recent trading day from the real-time quote when the
+    /// historical daily-bar feed stops short of `end` (WC-51).
+    ///
+    /// Yahoo's `/v8/finance/chart` endpoint returns null/empty recent closes for
+    /// many mutual funds (and some thin equities), so historical sync freezes at
+    /// the last non-null bar. The `/v10/finance/quoteSummary` price module still
+    /// carries the current value (`regularMarketPrice`) — exactly what a direct
+    /// browser API call shows. When historical data does not reach the requested
+    /// end date, append that latest value so the current valuation is correct.
+    async fn backfill_recent_from_latest(
+        &self,
+        symbol: &str,
+        context: &QuoteContext,
+        quotes: &mut Vec<Quote>,
+        end: DateTime<Utc>,
+    ) {
+        let end_date = end.date_naive();
+        let newest = quotes.iter().map(|q| q.timestamp.date_naive()).max();
+
+        // Historical bars already cover the requested end — avoid the extra call.
+        if newest.is_some_and(|n| n >= end_date) {
+            return;
+        }
+
+        let mut latest = match self.fetch_latest_quote_backup(symbol, context).await {
+            Ok(quote) => quote,
+            Err(e) => {
+                debug!(
+                    "WC-51: latest-quote fallback unavailable for {}: {}",
+                    symbol, e
+                );
+                return;
+            }
+        };
+
+        let Some(target_date) =
+            Self::plan_latest_fill(newest, latest.timestamp.date_naive(), end_date)
+        else {
+            return;
+        };
+
+        // Normalize onto the daily-series convention (fixed intra-UTC-day time so
+        // the stored date never rolls over midnight UTC).
+        latest.timestamp = target_date
+            .and_hms_opt(20, 0, 0)
+            .map(|dt| Utc.from_utc_datetime(&dt))
+            .unwrap_or(latest.timestamp);
+
+        debug!(
+            "WC-51: filled {} {} from regularMarketPrice fallback",
+            symbol, target_date
+        );
+        quotes.push(latest);
+    }
+
+    // ========================================================================
     // Profile Fetching
     // ========================================================================
 
@@ -975,52 +1061,69 @@ impl MarketDataProvider for YahooProvider {
             return Ok(vec![]);
         }
 
+        // WC-51: only equities/funds use the regularMarketPrice fallback below;
+        // FX/crypto/metals get complete daily bars from Yahoo's chart feed.
+        let allow_latest_fallback = matches!(&instrument, ProviderInstrument::EquitySymbol { .. });
+
         let start_time = Self::chrono_to_offset_datetime(start);
         let end_time = Self::chrono_to_offset_datetime(end);
 
-        let response = self
+        // Fetch historical daily bars. A missing range is treated as empty (not a
+        // hard error) so the fallback can still fill recent days for funds whose
+        // /v8 chart closes come back null (WC-51).
+        let mut quotes: Vec<Quote> = match self
             .connector
             .get_quote_history(&symbol, start_time, end_time)
             .await
-            .map_err(|e| self.convert_yahoo_error(e, &symbol))?;
+        {
+            Ok(response) => {
+                // Prefer Yahoo's own currency from response metadata over resolver chain
+                let currency = response
+                    .metadata()
+                    .ok()
+                    .and_then(|m| m.currency)
+                    .unwrap_or_else(|| self.get_currency(context));
 
-        // Prefer Yahoo's own currency from response metadata over resolver chain
-        let currency = response
-            .metadata()
-            .ok()
-            .and_then(|m| m.currency)
-            .unwrap_or_else(|| self.get_currency(context));
-
-        match response.quotes() {
-            Ok(yahoo_quotes) => {
-                let quotes: Vec<Quote> = yahoo_quotes
-                    .into_iter()
-                    .filter_map(|q| match self.yahoo_quote_to_quote(q, currency.clone()) {
-                        Ok(quote) => Some(quote),
-                        Err(e) => {
-                            warn!("Skipping quote due to conversion error: {:?}", e);
-                            None
-                        }
-                    })
-                    .collect();
-
-                if quotes.is_empty() {
-                    return Err(MarketDataError::NoDataForRange);
+                match response.quotes() {
+                    Ok(yahoo_quotes) => yahoo_quotes
+                        .into_iter()
+                        .filter_map(|q| match self.yahoo_quote_to_quote(q, currency.clone()) {
+                            Ok(quote) => Some(quote),
+                            Err(e) => {
+                                warn!("Skipping quote due to conversion error: {:?}", e);
+                                None
+                            }
+                        })
+                        .collect(),
+                    Err(yahoo::YahooError::NoQuotes) => {
+                        warn!(
+                            "No historical quotes returned for '{}' between {} and {}",
+                            symbol,
+                            start.format("%Y-%m-%d"),
+                            end.format("%Y-%m-%d")
+                        );
+                        Vec::new()
+                    }
+                    Err(e) => return Err(self.convert_yahoo_error(e, &symbol)),
                 }
+            }
+            Err(e) => match self.convert_yahoo_error(e, &symbol) {
+                // No data in range is recoverable via the latest-quote fallback.
+                MarketDataError::NoDataForRange => Vec::new(),
+                other => return Err(other),
+            },
+        };
 
-                Ok(quotes)
-            }
-            Err(yahoo::YahooError::NoQuotes) => {
-                warn!(
-                    "No historical quotes returned for '{}' between {} and {}",
-                    symbol,
-                    start.format("%Y-%m-%d"),
-                    end.format("%Y-%m-%d")
-                );
-                Err(MarketDataError::NoDataForRange)
-            }
-            Err(e) => Err(self.convert_yahoo_error(e, &symbol)),
+        if allow_latest_fallback {
+            self.backfill_recent_from_latest(&symbol, context, &mut quotes, end)
+                .await;
         }
+
+        if quotes.is_empty() {
+            return Err(MarketDataError::NoDataForRange);
+        }
+
+        Ok(quotes)
     }
 
     async fn get_splits(
@@ -1278,6 +1381,47 @@ mod tests {
 
         // Test fallback to symbol
         assert_eq!(format_name(None, "EQUITY", None, "AAPL"), "AAPL");
+    }
+
+    #[test]
+    fn test_plan_latest_fill() {
+        let d = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+
+        // Historical stops at 7/31, current NAV observed 8/4, end 8/4 → fill 8/4.
+        assert_eq!(
+            YahooProvider::plan_latest_fill(Some(d("2026-07-31")), d("2026-08-04"), d("2026-08-04")),
+            Some(d("2026-08-04"))
+        );
+
+        // Evening-ET NAV rolls into next UTC day (observed 8/5) → clamp to end 8/4.
+        assert_eq!(
+            YahooProvider::plan_latest_fill(Some(d("2026-07-31")), d("2026-08-05"), d("2026-08-04")),
+            Some(d("2026-08-04"))
+        );
+
+        // Intraday: only yesterday's NAV posted (observed 8/3) → fill 8/3, not 8/4.
+        assert_eq!(
+            YahooProvider::plan_latest_fill(Some(d("2026-07-31")), d("2026-08-03"), d("2026-08-04")),
+            Some(d("2026-08-03"))
+        );
+
+        // Historical already current → no fill.
+        assert_eq!(
+            YahooProvider::plan_latest_fill(Some(d("2026-08-04")), d("2026-08-04"), d("2026-08-04")),
+            None
+        );
+
+        // Latest not newer than historical → no duplicate fill.
+        assert_eq!(
+            YahooProvider::plan_latest_fill(Some(d("2026-07-31")), d("2026-07-31"), d("2026-08-04")),
+            None
+        );
+
+        // No historical bars at all → fill the (clamped) observed date.
+        assert_eq!(
+            YahooProvider::plan_latest_fill(None, d("2026-08-05"), d("2026-08-04")),
+            Some(d("2026-08-04"))
+        );
     }
 
     #[test]
