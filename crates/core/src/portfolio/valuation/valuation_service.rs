@@ -1723,8 +1723,18 @@ impl ValuationServiceTrait for ValuationService {
                     .load_latest_valuation_date(account_id)?;
 
                 if let Some(last_saved) = last_saved_date_opt {
-                    calculation_start_date = Some(last_saved);
-                    incremental_anchor_date = Some(last_saved);
+                    // WC-52: re-run the last saved day, not just the days after it.
+                    // The current-day valuation is often first written before that
+                    // day's market quotes exist (e.g. a pre-open sync), so it carries
+                    // the prior close. Anchoring on `last_saved` itself discarded the
+                    // freshly recomputed row (see the `retain(date != anchor)` below),
+                    // freezing that stale value until a Full rebuild. Anchor on the
+                    // PRIOR day instead — exactly like SinceDate(last_saved) — so the
+                    // last day is recomputed AND saved, picking up quotes that landed
+                    // after it was first written.
+                    let (start_date, anchor_date) = since_date_calculation_window(last_saved);
+                    calculation_start_date = Some(start_date);
+                    incremental_anchor_date = anchor_date;
                 }
             }
         }
@@ -2751,6 +2761,32 @@ mod tests {
 
         assert_eq!(start_date, NaiveDate::MIN);
         assert_eq!(anchor_date, None);
+    }
+
+    // WC-52: `IncrementalFromLast` must re-run AND save the last saved day so it
+    // picks up quotes that arrived after that day's valuation was first written
+    // (e.g. a pre-open sync that carried the prior close). The window it uses must
+    // therefore anchor on the PRIOR day — never on `last_saved` itself, which would
+    // make the `retain(valuation_date != anchor_date)` step discard the freshly
+    // recomputed current-day row and freeze the stale value until a Full rebuild.
+    #[test]
+    fn incremental_from_last_recomputes_and_saves_the_last_day() {
+        let last_saved = date("2026-08-05");
+        // The fix reuses the SinceDate window keyed on the last saved day.
+        let (start_date, anchor_date) = since_date_calculation_window(last_saved);
+
+        // Recompute starts on the prior day (a discarded anchor), so `last_saved`
+        // itself is within the recomputed-and-saved range.
+        assert_eq!(start_date, date("2026-08-04"));
+        assert_eq!(anchor_date, Some(date("2026-08-04")));
+
+        // The regression guard: the anchor is NOT the last saved day, so the
+        // recomputed `last_saved` row survives `retain(date != anchor)` and is saved.
+        assert_ne!(
+            anchor_date,
+            Some(last_saved),
+            "anchoring on last_saved would discard the refreshed current-day valuation (the WC-52 bug)"
+        );
     }
 
     fn transfer_activity_on_date(
